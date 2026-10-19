@@ -10,7 +10,7 @@ enum AppBackup {
     }
 
     private static let defaultsPrefixes = ["nh.", "jm.", "reader.", "ui.", "dl.", "theme.", "venera.",
-                                           "net.", "lock.", "webdav.", "src.", "lib.", "search.", "list."]
+                                           "net.", "lock.", "webdav.", "src.", "lib.", "search.", "list.", "cloud."]
     /// 不放進備份的檔案（下載清單指向本機檔案，換裝置沒有意義）
     private static let excludedFiles: Set<String> = ["downloads.json"]
 
@@ -41,9 +41,11 @@ enum AppBackup {
             throw AppError.message(L("這不是有效的 GodBook 備份檔"))
         }
         let root = Storage.directory
+        // 結尾要加 /：否則 "../GodBookX/..." 這種相鄰資料夾也會通過前綴檢查
+        let rootPrefix = root.standardizedFileURL.path + "/"
         for (relative, content) in payload.files {
             let target = root.appendingPathComponent(relative)
-            guard target.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path) else { continue } // 防止路徑跳脫
+            guard target.standardizedFileURL.path.hasPrefix(rootPrefix) else { continue } // 防止路徑跳脫
             try? FileManager.default.createDirectory(at: target.deletingLastPathComponent(), withIntermediateDirectories: true)
             try content.write(to: target, options: .atomic)
         }

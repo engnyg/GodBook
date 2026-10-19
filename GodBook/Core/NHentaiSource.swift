@@ -27,8 +27,10 @@ struct NHentaiSource: ComicSource {
         guard let url = components.url else { throw AppError.message(L("網址無效")) }
         var request = URLRequest(url: url)
         request.setValue("NClient/3 (GodBook iOS)", forHTTPHeaderField: "User-Agent")
+        // API Key 只送給 nhentai 官方網域；改用第三方鏡像時不送，避免金鑰外流
         let key = AppSettings.shared.nhApiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !key.isEmpty { request.setValue("Key \(key)", forHTTPHeaderField: "Authorization") }
+        let official = host == "nhentai.net" || host.hasSuffix(".nhentai.net")
+        if !key.isEmpty, official { request.setValue("Key \(key)", forHTTPHeaderField: "Authorization") }
         return request
     }
 

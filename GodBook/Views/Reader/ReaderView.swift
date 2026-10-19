@@ -79,6 +79,8 @@ struct ReaderView: View {
         .onDisappear {
             volume.stop()
             UIApplication.shared.isIdleTimerDisabled = false
+            library.flush() // 雲端保存策略會讀取檔案中的閱讀位置
+            CloudSync.shared.applyRetention(for: detail.summary) // 「只保留最近幾話」依新的閱讀位置調整
         }
         .onReceive(autoTurnTimer) { _ in
             guard prefs.autoTurnSeconds > 0, !isLoading, !pages.isEmpty else { return }
@@ -322,8 +324,7 @@ struct ReaderView: View {
 
     private func saveToPhotos() async {
         guard let image = await image(at: current) else { show(L("圖片尚未載入完成")); return }
-        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-        show(L("已儲存到相簿"))
+        show(PhotoSaver.resultMessage(await PhotoSaver.save(image)))
     }
 
     private func share() async {
@@ -354,7 +355,17 @@ struct ReaderView: View {
             if let local = DownloadStorage.localPages(summary: detail.summary, chapterId: chapter.id) {
                 loaded = local // 已下載：離線閱讀
             } else {
-                loaded = try await SourceRegistry.source(detail.summary.source).pages(of: detail, chapter: chapter)
+                // 已釋放本機空間的章節從雲端讀；雲端失敗時改從來源讀
+                var cloudPages: [ReaderPage]?
+                var cloudError: Error?
+                do { cloudPages = try await CloudSync.shared.pages(summary: detail.summary, chapterId: chapter.id) }
+                catch { cloudError = error }
+                if let cloudPages {
+                    loaded = cloudPages
+                } else {
+                    do { loaded = try await SourceRegistry.source(detail.summary.source).pages(of: detail, chapter: chapter) }
+                    catch { throw cloudError ?? error }
+                }
             }
             pages = loaded
             if startAtEnd { current = max(loaded.count - 1, 0); startAtEnd = false }

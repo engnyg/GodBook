@@ -228,6 +228,7 @@ struct RemoteImageView: View {
         guard let spec else { return }
         if loadedSpec == spec, image != nil { return }
         image = nil
+        failed = false // 換了圖片（例如列表重用）時，不要沿用上一張的失敗狀態
         do {
             let loaded = try await ImageLoader.shared.image(for: spec)
             image = loaded

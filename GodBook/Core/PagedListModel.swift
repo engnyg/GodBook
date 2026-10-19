@@ -18,6 +18,8 @@ final class PagedListModel: ObservableObject {
     private var generation = 0
     private var seen = Set<String>()
     private var knownTotal: Int?
+    /// 連續幾頁載入後完全沒有可顯示的項目（全被屏蔽）
+    private var emptyStreak = 0
 
     func start(paging: Bool = false, _ loader: @escaping (Int) async throws -> ComicPageResult) {
         generation += 1
@@ -32,6 +34,7 @@ final class PagedListModel: ObservableObject {
         errorMessage = nil
         didLoadOnce = false
         knownTotal = nil
+        emptyStreak = 0
         isLoading = false
         if paging { goTo(1) } else { loadMore() }
     }
@@ -58,7 +61,8 @@ final class PagedListModel: ObservableObject {
                 let result = try await loader(page)
                 guard ticket == generation else { return }
                 let fresh = result.items.filter { seen.insert($0.id).inserted }
-                items.append(contentsOf: fresh.filter { !Blocklist.blocks($0) })
+                let visible = fresh.filter { !Blocklist.blocks($0) }
+                items.append(contentsOf: visible)
                 nextPage = page + 1
                 if let total = result.total { knownTotal = total }
                 var more = !result.items.isEmpty
@@ -68,6 +72,13 @@ final class PagedListModel: ObservableObject {
                 hasMore = more
                 didLoadOnce = true
                 isLoading = false
+                // 整頁都被屏蔽時畫面上不會出現新項目，也就不會觸發下一頁；自動再往下載（最多連續 5 頁）
+                if visible.isEmpty && more {
+                    emptyStreak += 1
+                    if emptyStreak < 5 { loadMore() }
+                } else {
+                    emptyStreak = 0
+                }
             } catch {
                 guard ticket == generation else { return }
                 errorMessage = error.localizedDescription

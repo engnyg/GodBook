@@ -106,6 +106,8 @@ final class JMClient {
                 guard let url = components.url else { continue }
 
                 var request = URLRequest(url: url)
+                // 回應是用本次的時間戳加密的；不能拿 URL 快取裡的舊回應（會解密失敗，也可能混到登入前後的內容）
+                request.cachePolicy = .reloadIgnoringLocalCacheData
                 let secret = scramble ? profile.scrambleSecret : profile.tokenSecret
                 let (token, tokenparam) = JMCrypto.token(ts: ts, secret: secret, version: profile.version)
                 request.setValue(token, forHTTPHeaderField: "token")

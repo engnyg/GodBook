@@ -211,6 +211,17 @@ final class VeneraBridge {
     private var documents: [Int: Document] = [:]
     private var nodes: [Int: [Int: Node]] = [:]
     private var nextNodeKey: [Int: Int] = [:]
+    /// 解析順序；很多腳本不會呼叫 dispose()，超過上限時釋放最舊的文件
+    private var documentOrder: [Int] = []
+    private static let maxDocuments = 32
+
+    /// 這個環境所屬的漫畫源；資料與設定只能存取這個漫畫源的（只在 JS 佇列上讀寫）
+    private(set) var boundKey: String?
+
+    /// 綁定所屬漫畫源；已綁定時不會改變
+    func bind(source key: String) {
+        if boundKey == nil { boundKey = key }
+    }
 
     init(queue: DispatchQueue) {
         self.queue = queue
@@ -278,12 +289,23 @@ final class VeneraBridge {
             return text
         } as @convention(block) () -> String)
 
-        // 儲存
-        bind("loadData", { (source: String, key: String) -> String? in VeneraStorage.shared.data(source, key) } as @convention(block) (String, String) -> String?)
-        bind("saveData", { (source: String, key: String, json: String) in VeneraStorage.shared.setData(source, key, json) } as @convention(block) (String, String, String) -> Void)
-        bind("deleteData", { (source: String, key: String) in VeneraStorage.shared.deleteData(source, key) } as @convention(block) (String, String) -> Void)
-        bind("loadSetting", { (source: String, key: String) -> String? in VeneraStorage.shared.setting(source, key) } as @convention(block) (String, String) -> String?)
-        bind("isLogged", { (source: String) -> Bool in VeneraStorage.shared.isLogged(source) } as @convention(block) (String) -> Bool)
+        // 儲存：一律使用綁定的漫畫源，忽略腳本傳入的 source，避免讀寫其他漫畫源的帳號資料
+        bind("bindSource", { [weak self] (source: String) in self?.bind(source: source) } as @convention(block) (String) -> Void)
+        bind("loadData", { [weak self] (_: String, key: String) -> String? in
+            self?.boundKey.flatMap { VeneraStorage.shared.data($0, key) }
+        } as @convention(block) (String, String) -> String?)
+        bind("saveData", { [weak self] (_: String, key: String, json: String) in
+            if let source = self?.boundKey { VeneraStorage.shared.setData(source, key, json) }
+        } as @convention(block) (String, String, String) -> Void)
+        bind("deleteData", { [weak self] (_: String, key: String) in
+            if let source = self?.boundKey { VeneraStorage.shared.deleteData(source, key) }
+        } as @convention(block) (String, String) -> Void)
+        bind("loadSetting", { [weak self] (_: String, key: String) -> String? in
+            self?.boundKey.flatMap { VeneraStorage.shared.setting($0, key) }
+        } as @convention(block) (String, String) -> String?)
+        bind("isLogged", { [weak self] (_: String) -> Bool in
+            self?.boundKey.map { VeneraStorage.shared.isLogged($0) } ?? false
+        } as @convention(block) (String) -> Bool)
 
         // HTML
         bind("html", { [weak self] (fn: String, doc: Int, node: Int, arg: String) -> String? in
@@ -435,6 +457,11 @@ final class VeneraBridge {
             queue.async { _ = reject.call(withArguments: ["Invalid URL: \(urlString)"]) }
             return
         }
+        // 只允許網路請求；file:// 等其他協定可能讀到 App 內的檔案（其他漫畫源的帳號資料等）
+        guard let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" else {
+            queue.async { _ = reject.call(withArguments: ["Unsupported URL scheme: \(url.scheme ?? "")"]) }
+            return
+        }
         let attempt = startAttempt ?? HTTP.bridgeLevel(for: url.host ?? "")
         var request = URLRequest(url: url)
         request.httpMethod = method
@@ -560,14 +587,22 @@ final class VeneraBridge {
             return key
         }
 
+        func release(_ key: Int) {
+            documents[key] = nil; nodes[key] = nil; nextNodeKey[key] = nil
+            documentOrder.removeAll { $0 == key }
+        }
+
         if fn == "parse" {
+            release(docKey)
             documents[docKey] = try? SwiftSoup.parse(arg)
             nodes[docKey] = [:]
             nextNodeKey[docKey] = 0
+            documentOrder.append(docKey)
+            while documentOrder.count > Self.maxDocuments { release(documentOrder[0]) }
             return nil
         }
         if fn == "dispose" {
-            documents[docKey] = nil; nodes[docKey] = nil; nextNodeKey[docKey] = nil
+            release(docKey)
             return nil
         }
         guard let document = documents[docKey] else { return nil }

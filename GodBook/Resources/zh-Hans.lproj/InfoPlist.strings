@@ -1,0 +1,4 @@
+/* 系統權限提示（iOS 依系統語言顯示，不受 App 內語言設定影響） */
+"NSPhotoLibraryUsageDescription" = "选择自定义背景图片";
+"NSPhotoLibraryAddUsageDescription" = "保存漫画图片到相册";
+"NSFaceIDUsageDescription" = "解锁 GodBook";

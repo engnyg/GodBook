@@ -465,6 +465,7 @@ function __loadSource(js) {
   if (!inst.name) throw 'name is required';
   if (!inst.key) throw 'key is required';
   if (!/^[a-zA-Z0-9_]+$/.test(inst.key)) throw 'key ' + inst.key + ' is invalid';
+  __native.bindSource(inst.key);
   ComicSource.sources[inst.key] = inst;
   if (typeof inst.init === 'function') {
     try { var r = inst.init(); if (r && r.catch) r.catch(function (e) { console.error('init: ' + __errText(e)); }); }

@@ -248,7 +248,8 @@ protocol ComicSource {
     func pages(of detail: ComicDetail, chapter: Chapter) async throws -> [ReaderPage]
 }
 
-private let unsupported = AppError.message(L("這個來源不支援此功能"))
+/// 每次取用時才翻譯，切換語言後訊息也會跟著變
+private var unsupported: AppError { AppError.message(L("這個來源不支援此功能")) }
 
 extension ComicSource {
     var capabilities: SourceCapabilities { SourceCapabilities() }
