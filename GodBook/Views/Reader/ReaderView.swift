@@ -174,7 +174,13 @@ struct ReaderView: View {
         let upper = min(pages.count, current + 1 + prefs.preloadCount)
         for index in (current + 1)..<upper {
             let spec = pages[index].image
-            Task.detached(priority: .utility) { _ = try? await ImageLoader.shared.image(for: spec) }
+            if index - current <= 2 {
+                // 緊接著的兩頁：下載並解碼好，翻過去／捲過去就能直接顯示
+                Task.detached(priority: .utility) { _ = try? await ImageLoader.shared.image(for: spec) }
+            } else {
+                // 更後面的只先下載，等接近時再解碼
+                Task.detached(priority: .utility) { await ImageLoader.preload(spec) }
+            }
         }
     }
 

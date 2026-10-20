@@ -59,7 +59,7 @@ struct ContinuousReader: View {
     private func items(_ container: CGSize) -> some View {
         if rtl { edgeItem(container) }
         ForEach(ordered) { page in
-            RemoteImageView(spec: page.image)
+            RemoteImageView(spec: page.image, loadDelay: 0.12)
                 .frame(width: horizontal ? nil : container.width * zoom,
                        height: horizontal ? container.height * zoom : nil)
                 .id(page.index)

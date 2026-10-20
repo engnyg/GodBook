@@ -147,6 +147,11 @@ actor ImageLoader {
         return await image.byPreparingForDisplay() ?? image
     }
 
+    /// 只下載到磁碟快取、不解碼：預載比較遠的頁面時用，省 CPU 與記憶體（venera 的連續捲動模式也只預下載）
+    static func preload(_ spec: ImageSpec) async {
+        _ = try? await rawData(spec)
+    }
+
     /// 下載（或讀取本機）原始圖片資料；網路錯誤最多重試 3 次。
     static func rawData(_ spec: ImageSpec) async throws -> Data {
         if spec.url.isFileURL { return try Data(contentsOf: spec.url) }
@@ -236,16 +241,19 @@ struct RemoteImageView: View {
     var fill = false
     /// 載入前的預留高寬比 (寬/高)
     var placeholderAspect: CGFloat = 0.72
+    /// 進入畫面後等多久才開始載入；快速捲動時視圖一閃而過就不會發出請求（venera 用 Flutter 的 ScrollAwareImageProvider 做同樣的事）
+    var loadDelay: TimeInterval = 0
 
     @State private var image: UIImage?
     @State private var loadedSpec: ImageSpec?
     @State private var failed = false
     @State private var attempt = 0
 
-    init(spec: ImageSpec?, fill: Bool = false, placeholderAspect: CGFloat = 0.72) {
+    init(spec: ImageSpec?, fill: Bool = false, placeholderAspect: CGFloat = 0.72, loadDelay: TimeInterval = 0) {
         self.spec = spec
         self.fill = fill
         self.placeholderAspect = placeholderAspect
+        self.loadDelay = loadDelay
         // 已在記憶體快取的圖直接顯示，不經過佔位（快速捲動時視圖會一直重建）
         let cached = spec.flatMap { ImageMemory.image(for: $0) }
         _image = State(initialValue: cached)
@@ -291,6 +299,10 @@ struct RemoteImageView: View {
         guard let spec else { return }
         if loadedSpec == spec, image != nil { return }
         image = nil
+        if loadDelay > 0 {
+            try? await Task.sleep(nanoseconds: UInt64(loadDelay * 1_000_000_000))
+            if Task.isCancelled { return }
+        }
         failed = false // 換了圖片（例如列表重用）時，不要沿用上一張的失敗狀態
         do {
             let loaded = try await ImageLoader.shared.image(for: spec)
