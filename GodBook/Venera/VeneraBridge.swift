@@ -440,7 +440,7 @@ final class VeneraBridge {
         request.httpMethod = method
         // 這些標頭必須交給系統處理：手動指定 Accept-Encoding 會讓 URLSession 不再自動解壓縮
         //（腳本常帶 "gzip, deflate, br, zstd"，結果收到壓縮資料或 -1103 resource exceeds maximum size）
-        let managedHeaders: Set<String> = ["accept-encoding", "content-length", "host", "connection", "transfer-encoding"]
+        let managedHeaders: Set<String> = ["accept-encoding", "content-length", "host", "connection", "transfer-encoding", "http_client"]
         if let data = headersJSON.data(using: .utf8),
            let headers = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
             for (key, value) in headers where !managedHeaders.contains(key.lowercased()) {
@@ -459,7 +459,15 @@ final class VeneraBridge {
 
         let queue = self.queue
         let host = url.host ?? ""
+        let logPath = url.path
+        let sensitive = ["login", "sign-in", "signin", "auth", "token", "password"].contains { logPath.lowercased().contains($0) }
         let deliver: (Int, [String: String], Data) -> Void = { status, headers, payload in
+            // 腳本常只丟出「Invalid status code: 400」，在執行記錄補上伺服器實際回了什麼，方便排查
+            if status >= 400 {
+                let snippet = sensitive ? "" : String(String(decoding: payload.prefix(300), as: UTF8.self)
+                    .replacingOccurrences(of: "\n", with: " ").prefix(200))
+                VeneraLog.shared.add("warn", "HTTP \(status) \(method) \(host)\(logPath)", snippet)
+            }
             let result: [String: Any] = [
                 "status": status,
                 "headers": headers,
