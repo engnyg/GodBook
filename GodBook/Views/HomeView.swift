@@ -1,6 +1,17 @@
 import SwiftUI
 
+/// 首頁導覽堆疊的目的地：一律走 NavigationPath，不混用 navigationDestination(item:/isPresented:)——
+/// 兩種方式並存時，從聚合搜尋點開漫畫會讓舊的目的地被重新推入一次（又跳回聚合搜尋）。
+struct AggregatedRoute: Hashable {
+    let query: String
+}
+
+struct CategoriesRoute: Hashable {
+    let source: SourceKind
+}
+
 struct HomeView: View {
+    @Binding var path: NavigationPath
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var venera: VeneraStore
     @StateObject private var model = PagedListModel()
@@ -8,17 +19,9 @@ struct HomeView: View {
     @State private var query = ""
     @State private var sortIds: [SourceKind: String] = [:]
     @State private var filterValues: [SourceKind: [String: String]] = [:]
-    @State private var directOpen: ComicSummary?
     @State private var showFilters = false
-    @State private var showCategories = false
-    @State private var aggregatedQuery: AggregatedRoute?
     @State private var tagSuggestions: [TagSuggestionRow] = []
     @ObservedObject private var deepLink = DeepLink.shared
-
-    struct AggregatedRoute: Hashable, Identifiable {
-        let query: String
-        var id: String { query }
-    }
 
     struct TagSuggestionRow: Identifiable, Hashable {
         let id: String
@@ -93,10 +96,10 @@ struct HomeView: View {
                     }
                 }
                 if !source.categorySections().isEmpty {
-                    Button { showCategories = true } label: { Image(systemName: "square.grid.3x3") }
+                    Button { path.append(CategoriesRoute(source: settings.lastSource)) } label: { Image(systemName: "square.grid.3x3") }
                 }
                 Menu {
-                    Button { aggregatedQuery = AggregatedRoute(query: searchText.trimmingCharacters(in: .whitespaces)) } label: {
+                    Button { path.append(AggregatedRoute(query: searchText.trimmingCharacters(in: .whitespaces))) } label: {
                         Label(L("聚合搜尋（多個來源）"), systemImage: "magnifyingglass.circle")
                     }
                     Button { openFromClipboard() } label: { Label(L("從剪貼簿開啟連結"), systemImage: "doc.on.clipboard") }
@@ -116,12 +119,9 @@ struct HomeView: View {
                 get: { filterValues[settings.lastSource] ?? [:] },
                 set: { filterValues[settings.lastSource] = $0 }))
         }
-        .navigationDestination(isPresented: $showCategories) { CategoriesView(source: settings.lastSource) }
-        .navigationDestination(item: $aggregatedQuery) { AggregatedSearchView(query: $0.query) }
-        .navigationDestination(item: $directOpen) { DetailView(summary: $0) }
         .onChange(of: deepLink.summary) { _, value in
             guard let value else { return }
-            directOpen = value
+            path.append(value)
             deepLink.summary = nil
         }
         .task(id: LoadKey(source: settings.lastSource, query: query, sort: currentSort.id, catalog: catalogState,
@@ -220,17 +220,17 @@ struct HomeView: View {
         // 貼上的是漫畫連結（或車號）時直接開啟
         if LinkResolver.looksLikeLink(text) || text.lowercased().hasPrefix("jm") {
             Task {
-                if let found = await LinkResolver.resolve(text) { directOpen = found } else { query = text }
+                if let found = await LinkResolver.resolve(text) { path.append(found) } else { query = text }
             }
             return
         }
         if settings.defaultSearchTarget == "aggregated" {
-            aggregatedQuery = AggregatedRoute(query: text)
+            path.append(AggregatedRoute(query: text))
             return
         }
         // nhentai 的純數字視為 gallery ID，直接開啟
         if settings.lastSource == .nhentai, text.allSatisfy(\.isNumber) {
-            directOpen = ComicSummary(source: .nhentai, sid: text, title: "#\(text)")
+            path.append(ComicSummary(source: .nhentai, sid: text, title: "#\(text)"))
             return
         }
         query = text
@@ -242,7 +242,7 @@ struct HomeView: View {
             return
         }
         Task {
-            if let found = await LinkResolver.resolve(text) { directOpen = found }
+            if let found = await LinkResolver.resolve(text) { path.append(found) }
             else { ToastCenter.shared.show(L("剪貼簿的內容不是可辨識的漫畫連結")) }
         }
     }

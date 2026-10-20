@@ -4,6 +4,7 @@ struct RootView: View {
     /// 切換語言時整個畫面會重建；記住目前的分頁，切完仍停在原本的分頁（例如設定）
     private static var lastTab: Int?
     @State private var tab = RootView.lastTab ?? AppSettings.shared.initialTab
+    @State private var homePath = NavigationPath()
     @ObservedObject private var deepLink = DeepLink.shared
     @ObservedObject private var settings = AppSettings.shared
 
@@ -11,8 +12,8 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $tab) {
-            NavigationStack {
-                HomeView()
+            NavigationStack(path: $homePath) {
+                HomeView(path: $homePath)
                     .comicDestinations()
             }
             .tabItem { Label(L("探索"), systemImage: "square.grid.2x2.fill") }
@@ -51,5 +52,7 @@ extension View {
     func comicDestinations() -> some View {
         navigationDestination(for: ComicSummary.self) { DetailView(summary: $0) }
             .navigationDestination(for: SearchRoute.self) { SearchResultsView(route: $0) }
+            .navigationDestination(for: AggregatedRoute.self) { AggregatedSearchView(query: $0.query) }
+            .navigationDestination(for: CategoriesRoute.self) { CategoriesView(source: $0.source) }
     }
 }
