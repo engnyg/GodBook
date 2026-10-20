@@ -479,8 +479,9 @@ final class VeneraBridge {
         // 第一次失敗時改要求不壓縮的內容，並改用只走 TCP（不用 HTTP/3）的連線重試
         if attempt > 0 { request.setValue("identity", forHTTPHeaderField: "Accept-Encoding") }
         request.cachePolicy = .reloadIgnoringLocalCacheData
+        // 預設 UA 與 venera 相同（桌面版 Chrome）：很多腳本解析的是桌面版網頁，用手機 UA 會被轉去結構不同的手機版
         if request.value(forHTTPHeaderField: "User-Agent") == nil {
-            request.setValue("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1", forHTTPHeaderField: "User-Agent")
+            request.setValue("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36", forHTTPHeaderField: "User-Agent")
         }
         if let body, let data = Data(base64Encoded: body) { request.httpBody = data }
 
