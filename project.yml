@@ -73,6 +73,8 @@ targets:
         # 部分漫畫源的圖片是 http:// 網址；venera 的網路層不受 ATS 限制，這裡也要放行
         NSAppTransportSecurity:
           NSAllowsArbitraryLoads: true
+        # 允許 ProMotion（120Hz）：iPhone 上第三方 App 預設把自訂動畫與 Core Animation 限制在 60Hz
+        CADisableMinimumFrameDurationOnPhone: true
         # 設為 false 才會啟用 iOS 26 的液態玻璃外觀
         UIDesignRequiresCompatibility: false
         NSPhotoLibraryUsageDescription: 選擇自訂背景圖片
