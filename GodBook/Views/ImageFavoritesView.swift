@@ -85,8 +85,7 @@ struct ImageFavoriteViewer: View {
                 }
                 circle("square.and.arrow.down") {
                     if let image = UIImage(contentsOfFile: store.fileURL(item).path) {
-                        UIImageWriteToSavedPhotosAlbum(image, nil, nil, nil)
-                        message = L("已儲存到相簿")
+                        Task { message = PhotoSaver.resultMessage(await PhotoSaver.save(image)) }
                     }
                 }
                 circle(loadingReader ? "hourglass" : "book") { Task { await openReader() } }

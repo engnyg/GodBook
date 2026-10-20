@@ -10,6 +10,11 @@ on:
 permissions:
   contents: write
 
+# 同一個分支（含它的 PR）只保留最新一次編譯：推送分支與開 PR 幾乎同時發生時，不必重複編譯同一份程式碼
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.ref || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     # 液態玻璃需要 iOS 26 SDK（Xcode 26），因此使用 macOS 26 runner
@@ -52,8 +57,8 @@ jobs:
           set -e
           APP=$(find build/Build/Products -maxdepth 2 -name "GodBook.app" | head -1)
           test -d "$APP"
-          # 以 ldid 做假簽章，讓 TrollStore / AltStore / Sideloadly 可直接安裝
-          ldid -S "$APP/GodBook" || true
+          # 以 ldid 做假簽章，讓 TrollStore / AltStore / Sideloadly 可直接安裝；失敗就讓編譯失敗，不要產出沒簽好的 IPA
+          ldid -S "$APP/GodBook"
           rm -rf Payload GodBook.ipa
           mkdir Payload
           cp -R "$APP" Payload/

@@ -1,7 +1,9 @@
 import SwiftUI
 
 struct RootView: View {
-    @State private var tab = AppSettings.shared.initialTab
+    /// 切換語言時整個畫面會重建；記住目前的分頁，切完仍停在原本的分頁（例如設定）
+    private static var lastTab: Int?
+    @State private var tab = RootView.lastTab ?? AppSettings.shared.initialTab
     @ObservedObject private var deepLink = DeepLink.shared
     @ObservedObject private var settings = AppSettings.shared
 
@@ -32,10 +34,12 @@ struct RootView: View {
             .tag(2)
         }
         .overlay { ToastOverlay() }
+        .onChange(of: tab) { _, value in RootView.lastTab = value }
         .onChange(of: showLibrary) { _, shown in if !shown && tab == 1 { tab = 0 } }
         .onChange(of: deepLink.summary) { _, value in if value != nil { tab = 0 } }
         .task {
             DownloadManager.shared.resumeQueued()
+            CloudSync.shared.start()
             await VeneraStore.shared.bootstrap()
             await FollowStore.shared.checkIfDue(favorites: FavoritesStore.shared)
         }

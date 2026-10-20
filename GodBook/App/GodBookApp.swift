@@ -44,6 +44,7 @@ struct GodBookApp: App {
                 .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .background:
+                        library.flush()
                         lock.lockIfNeeded()
                         if settings.webdavAutoUpload, !settings.webdavURL.isEmpty { backgroundUpload() }
                     case .active:

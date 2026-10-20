@@ -9,7 +9,11 @@ final class AppSettings: ObservableObject {
     @Published var nhApiKey: String { didSet { defaults.set(nhApiKey, forKey: "nh.apiKey") } }
     @Published var jmCustomDomain: String { didSet { defaults.set(jmCustomDomain, forKey: "jm.customDomain") } }
     @Published var jmUsername: String { didSet { defaults.set(jmUsername, forKey: "jm.username") } }
-    @Published var jmAVS: String { didSet { defaults.set(jmAVS, forKey: "jm.avs") } }
+    /// 禁漫登入工作階段：存在 Keychain（不放 UserDefaults，也就不會進入 App 備份）
+    @Published var jmAVS: String {
+        didSet { jmAVS.isEmpty ? Keychain.delete(Self.jmAVSKey) : Keychain.set(jmAVS, for: Self.jmAVSKey) }
+    }
+    private static let jmAVSKey = "jm.avs"
     @Published var readerMode: ReaderMode { didSet { defaults.set(readerMode.rawValue, forKey: "reader.mode") } }
     @Published var downloadConcurrency: Int { didSet { defaults.set(downloadConcurrency, forKey: "dl.concurrency") } }
     @Published var translateTags: Bool { didSet { defaults.set(translateTags, forKey: "ui.translateTags") } }
@@ -73,7 +77,12 @@ final class AppSettings: ObservableObject {
         nhApiKey = defaults.string(forKey: "nh.apiKey") ?? ""
         jmCustomDomain = defaults.string(forKey: "jm.customDomain") ?? ""
         jmUsername = defaults.string(forKey: "jm.username") ?? ""
-        jmAVS = defaults.string(forKey: "jm.avs") ?? ""
+        // 舊版存在 UserDefaults：搬到 Keychain 後移除（還原舊備份時也會在下次啟動搬走）
+        if let legacy = defaults.string(forKey: Self.jmAVSKey) {
+            if !legacy.isEmpty { Keychain.set(legacy, for: Self.jmAVSKey) }
+            defaults.removeObject(forKey: Self.jmAVSKey)
+        }
+        jmAVS = Keychain.get(Self.jmAVSKey) ?? ""
         readerMode = ReaderMode(rawValue: defaults.string(forKey: "reader.mode") ?? "") ?? .vertical
         disabledSources = Set(defaults.stringArray(forKey: "ui.disabledSources") ?? [])
         let savedConcurrency = defaults.integer(forKey: "dl.concurrency")

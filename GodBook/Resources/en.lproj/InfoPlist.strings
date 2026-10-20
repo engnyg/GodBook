@@ -1,0 +1,4 @@
+/* 系統權限提示（iOS 依系統語言顯示，不受 App 內語言設定影響） */
+"NSPhotoLibraryUsageDescription" = "Choose a custom background image";
+"NSPhotoLibraryAddUsageDescription" = "Save comic images to your photo library";
+"NSFaceIDUsageDescription" = "Unlock GodBook";

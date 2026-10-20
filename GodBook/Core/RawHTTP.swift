@@ -34,6 +34,11 @@ enum RawHTTP {
                let location = reply.headers["location"], let base = current.url,
                let next = URL(string: location, relativeTo: base)?.absoluteURL {
                 remaining -= 1
+                // 轉到其他主機時不帶原本的授權與 Cookie 標頭（Cookie 會依新網址從 Cookie 儲存區重新帶入）
+                if next.host?.lowercased() != base.host?.lowercased() {
+                    current.setValue(nil, forHTTPHeaderField: "Authorization")
+                    current.setValue(nil, forHTTPHeaderField: "Cookie")
+                }
                 current.url = next
                 if reply.status != 307 && reply.status != 308 {
                     current.httpMethod = "GET"
@@ -55,7 +60,9 @@ enum RawHTTP {
         let method = (request.httpMethod ?? "GET").uppercased()
         let payload = buildRequest(request, url: url, host: host, method: method)
         let connection = NWConnection(host: NWEndpoint.Host(host), port: port, using: parameters(secure: secure))
-        let raw = try await Exchange(connection: connection, payload: payload, method: method).run()
+        // 沿用請求設定的逾時（URLRequest 預設 60 秒），限制在 5–60 秒
+        let timeout = min(max(request.timeoutInterval, 5), 60)
+        let raw = try await Exchange(connection: connection, payload: payload, method: method, timeout: timeout).run()
         guard let reply = parse(raw, method: method, eof: true) else { throw RawError.invalid("Invalid response") }
         if let setCookie = reply.headers["set-cookie"] {
             for cookie in HTTPCookie.cookies(withResponseHeaderFields: ["Set-Cookie": setCookie], for: url) {
@@ -220,16 +227,32 @@ enum RawHTTP {
         private var buffer = Data()
         private var continuation: CheckedContinuation<Data, Error>?
         private var finished = false
+        private let timeout: TimeInterval
 
-        init(connection: NWConnection, payload: Data, method: String) {
+        init(connection: NWConnection, payload: Data, method: String, timeout: TimeInterval) {
             self.connection = connection
             self.payload = payload
             self.method = method
+            self.timeout = timeout
         }
 
+        /// Swift Task 被取消時（例如離開頁面）一併關閉連線
         func run() async throws -> Data {
+            try await withTaskCancellationHandler {
+                try await start()
+            } onCancel: {
+                queue.async { self.finish(.failure(CancellationError())) }
+            }
+        }
+
+        private func start() async throws -> Data {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Data, Error>) in
                 queue.async {
+                    // 開始前就已被取消
+                    guard !self.finished else {
+                        cont.resume(throwing: CancellationError())
+                        return
+                    }
                     self.continuation = cont
                     self.connection.stateUpdateHandler = { [weak self] state in
                         guard let self else { return }
@@ -247,7 +270,7 @@ enum RawHTTP {
                         }
                     }
                     self.connection.start(queue: self.queue)
-                    self.queue.asyncAfter(deadline: .now() + 30) { self.finish(.failure(RawError.timeout)) }
+                    self.queue.asyncAfter(deadline: .now() + self.timeout) { self.finish(.failure(RawError.timeout)) }
                 }
             }
         }

@@ -19,6 +19,7 @@ struct DetailView: View {
     @State private var showFavoriteSheet = false
     @State private var reverseOrder = AppSettings.shared.reverseChapters
     @EnvironmentObject private var imageFavorites: ImageFavoritesStore
+    @ObservedObject private var cloud = CloudSync.shared
     @State private var detail: ComicDetail?
     @State private var isOffline = false
     @State private var errorMessage: String?
@@ -115,7 +116,10 @@ struct DetailView: View {
         let resumeIndex = progress.flatMap { entry in detail.chapters.firstIndex { $0.id == entry.chapterId } }
         return VStack(spacing: 12) {
             readButtons(detail, progress: progress, resumeIndex: resumeIndex)
-            if !shown.source.isLocal { downloadAllButton(detail) }
+            if !shown.source.isLocal {
+                downloadAllButton(detail)
+                cloudActions(detail)
+            }
             if isOffline {
                 Label(L("離線模式：顯示已下載的內容"), systemImage: "wifi.slash")
                     .font(.caption).foregroundStyle(.secondary)
@@ -144,9 +148,15 @@ struct DetailView: View {
         let states = detail.chapters.map { downloads.item(detail.summary, $0) }
         let finished = states.filter { $0?.state == .finished }.count
         let active = states.compactMap { $0 }.filter { $0.state == .downloading || $0.state == .queued }
+        // 還沒下載、也不在雲端的章節（已在雲端的改由下方「從雲端下載回本機」取回）
+        let missing = detail.chapters.filter {
+            downloads.item(detail.summary, $0) == nil && cloud.record(DownloadItem.makeID(detail.summary, $0)) == nil
+        }
+        let backedUp = detail.chapters.allSatisfy { cloud.record(DownloadItem.makeID(detail.summary, $0)) != nil }
         return Group {
             if finished == detail.chapters.count {
-                GlassButton(title: L("已下載（點此刪除）"), systemImage: "checkmark.circle.fill") {
+                GlassButton(title: backedUp ? L("已下載・雲端已備份（點此刪除本機）") : L("已下載（點此刪除）"),
+                            systemImage: backedUp ? "checkmark.icloud.fill" : "checkmark.circle.fill") {
                     downloads.removeComic(detail.summary)
                 }
             } else if !active.isEmpty {
@@ -160,21 +170,83 @@ struct DetailView: View {
                     downloads.resumeAll(of: detail.summary)
                     downloads.enqueue(detail: detail, chapters: detail.chapters)
                 }
-            } else {
+            } else if !missing.isEmpty {
                 GlassButton(title: detail.chapters.count > 1 ? L("下載全部章節") : L("下載"), systemImage: "arrow.down.circle") {
-                    downloads.enqueue(detail: detail, chapters: detail.chapters)
+                    downloads.enqueue(detail: detail, chapters: missing)
                 }
             }
         }
         .disabled(isOffline && finished != detail.chapters.count)
     }
 
+    /// 雲端狀態與操作（單行本沒有章節列表，雲端狀態只能在這裡看到）
+    @ViewBuilder
+    private func cloudActions(_ detail: ComicDetail) -> some View {
+        let status = cloud.status(for: detail.summary)
+        if status.uploaded > 0 || status.active || (cloud.target != nil && status.notUploaded > 0) {
+            VStack(alignment: .leading, spacing: 8) {
+                Label(cloudSummary(status, chapterCount: detail.chapters.count),
+                      systemImage: status.active ? "arrow.triangle.2.circlepath.icloud" : (status.uploaded > 0 ? "checkmark.icloud" : "icloud.slash"))
+                    .font(.caption).foregroundStyle(.secondary)
+                if let error = status.failed {
+                    Text(error).font(.caption2).foregroundStyle(.red).lineLimit(3)
+                }
+                if !status.active {
+                    if cloud.target != nil, status.notUploaded > 0 {
+                        GlassButton(title: L("上傳到雲端"), systemImage: "icloud.and.arrow.up") { cloud.enqueue(comic: detail.summary) }
+                    }
+                    if status.cloudOnly > 0 {
+                        GlassButton(title: L("從雲端下載回本機"), systemImage: "icloud.and.arrow.down") {
+                            Task { await cloud.restoreLocal(detail.summary) }
+                        }
+                    }
+                    if status.localBackedUp > 0 {
+                        GlassButton(title: detail.chapters.count > 1 ? L("釋放全部本機空間（保留雲端）") : L("釋放本機空間（保留雲端）"),
+                                    systemImage: "externaldrive.badge.minus") {
+                            cloud.offload(comic: detail.summary)
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func cloudSummary(_ status: CloudComicStatus, chapterCount: Int) -> String {
+        if status.active { return L("雲端同步中…") }
+        if chapterCount <= 1 {
+            if status.cloudOnly > 0 { return L("只在雲端（本機已釋放空間）") }
+            return status.uploaded > 0 ? L("已備份到雲端") : L("尚未上傳到雲端")
+        }
+        var parts = [L("雲端 %@ 話", "\(status.uploaded)")]
+        if status.cloudOnly > 0 { parts.append(L("%@ 話僅雲端", "\(status.cloudOnly)")) }
+        if status.notUploaded > 0 { parts.append(L("%@ 話未上傳", "\(status.notUploaded)")) }
+        return parts.joined(separator: " · ")
+    }
+
     @ViewBuilder
     private func downloadAccessory(_ detail: ComicDetail, _ chapter: Chapter) -> some View {
         let item = downloads.item(detail.summary, chapter)
+        let key = DownloadItem.makeID(detail.summary, chapter)
         switch item?.state {
         case .finished:
-            Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+            // 已下載的章節：可單獨釋放、上傳或刪除
+            Menu {
+                if cloud.record(key) != nil {
+                    Button { cloud.offload(item!) } label: {
+                        Label(L("釋放本機空間（保留雲端）"), systemImage: "externaldrive.badge.minus")
+                    }
+                } else if cloud.target != nil {
+                    Button { cloud.enqueue([key]) } label: {
+                        Label(L("上傳到雲端"), systemImage: "icloud.and.arrow.up")
+                    }
+                }
+                Button(role: .destructive) { cloud.removeLocal(item!) } label: {
+                    Label(cloud.record(key) == nil ? L("刪除下載") : L("刪除本機下載（保留雲端）"), systemImage: "trash")
+                }
+            } label: {
+                Image(systemName: cloud.record(key) == nil ? "checkmark.circle.fill" : "checkmark.icloud.fill").foregroundStyle(.green)
+            }
         case .downloading:
             Button { downloads.pause(item!.id) } label: {
                 ProgressView(value: item!.progress).progressViewStyle(.circular).frame(width: 24, height: 24)
@@ -187,11 +259,25 @@ struct DetailView: View {
             Button { downloads.resume(item!.id) } label: { Image(systemName: "play.circle") }
                 .buttonStyle(.plain)
         case nil:
-            Button { downloads.enqueue(detail: detail, chapters: [chapter]) } label: {
-                Image(systemName: "arrow.down.circle")
+            if cloud.record(key) != nil {
+                // 只在雲端：點一下從雲端下載回本機
+                Button {
+                    Task { await cloud.restoreLocal(detail.summary, chapterIds: [chapter.id]) }
+                } label: {
+                    if cloud.tasks[key] == .downloading {
+                        ProgressView().frame(width: 24, height: 24)
+                    } else {
+                        Image(systemName: "icloud.and.arrow.down")
+                    }
+                }
+                .buttonStyle(.plain)
+            } else {
+                Button { downloads.enqueue(detail: detail, chapters: [chapter]) } label: {
+                    Image(systemName: "arrow.down.circle")
+                }
+                .buttonStyle(.plain)
+                .disabled(isOffline)
             }
-            .buttonStyle(.plain)
-            .disabled(isOffline)
         }
     }
 
@@ -282,7 +368,7 @@ struct DetailView: View {
             isOffline = false
             follow.markRead(summary, chapterCount: loaded.chapters.count, latestTitle: loaded.chapters.last?.title ?? "")
             // 已下載過的作品，順手更新本機詳情快取
-            if !downloads.items(for: summary).isEmpty { DownloadStorage.saveDetail(loaded) }
+            if !downloads.items(for: summary).isEmpty || cloud.hasRecords(summary.id) { DownloadStorage.saveDetail(loaded) }
         } catch {
             if let cached = DownloadStorage.loadDetail(summary) {
                 detail = cached

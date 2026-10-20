@@ -17,6 +17,7 @@ struct SettingsView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                languageCard
                 safeModeCard
                 themeCard
                 backgroundCard
@@ -37,6 +38,18 @@ struct SettingsView: View {
         .themedScreen()
         .navigationTitle(L("設定"))
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Picker("Language", selection: $settings.language) {
+                        ForEach(Language.choices, id: \.code) { Text(Language.title($0.code)).tag($0.code) }
+                    }
+                } label: {
+                    Image(systemName: "globe")
+                }
+                .accessibilityLabel("語言 / Language")
+            }
+        }
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
             Task {
@@ -84,9 +97,6 @@ struct SettingsView: View {
                 ForEach(AppearanceMode.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
-            Picker(L("語言"), selection: $settings.language) {
-                ForEach(Language.choices, id: \.code) { Text($0.code == "system" ? L("跟隨系統") : $0.title).tag($0.code) }
-            }
         }
     }
 
@@ -134,6 +144,18 @@ struct SettingsView: View {
         }
     }
 
+    // MARK: 語言
+
+    /// 標題固定中英並列：不管目前是哪種語言都找得到
+    private var languageCard: some View {
+        SettingsCard(title: "語言 / Language", systemImage: "globe") {
+            Picker("語言 / Language", selection: $settings.language) {
+                ForEach(Language.choices, id: \.code) { Text(Language.title($0.code)).tag($0.code) }
+            }
+            .pickerStyle(.segmented)
+        }
+    }
+
     // MARK: 安全模式
 
     private var safeModeCard: some View {
@@ -178,7 +200,7 @@ struct SettingsView: View {
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
-            Text(L("預設 nhentai.net。若遇到 403，可填入 API Key 或更換鏡像。"))
+            Text(L("預設 nhentai.net。若遇到 403，可填入 API Key 或更換鏡像。API Key 只會送到 nhentai.net，不會送到其他鏡像網域。"))
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -269,6 +291,7 @@ struct SettingsView: View {
     private var downloadCard: some View {
         SettingsCard(title: L("下載"), systemImage: "arrow.down.circle.fill") {
             Stepper(L("同時下載圖片數：%@", "\(settings.downloadConcurrency)"), value: $settings.downloadConcurrency, in: 1...8)
+            link(L("雲端儲存（OneDrive、Google Drive、WebDAV）"), systemImage: "icloud.fill") { CloudSettingsView() }
             Toggle(L("翻譯 nhentai 標籤（繁體中文）"), isOn: $settings.translateTags)
             HStack {
                 Text(L("已佔用空間"))
@@ -277,7 +300,7 @@ struct SettingsView: View {
             }
             Button(L("清除所有下載"), role: .destructive) { confirmClear = true }
                 .disabled(downloads.items.isEmpty)
-            Text(L("下載與匯出的檔案位於「檔案」App → GodBook → Downloads / Exports。"))
+            Text(L("下載與匯出的檔案位於「檔案」App → GodBook → Downloads / Exports。清除下載不會刪除雲端上的檔案。"))
                 .font(.footnote).foregroundStyle(.secondary)
         }
         .task(id: downloads.items.map(\.done).reduce(0, +)) {
