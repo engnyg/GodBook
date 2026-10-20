@@ -87,7 +87,7 @@ final class JMClient {
               query: [URLQueryItem] = [],
               form: [String: String]? = nil,
               scramble: Bool = false) async throws -> Response {
-        var lastError: Error = AppError.message("所有 API 網域皆無法連線")
+        var lastError: Error = AppError.message(L("所有 API 網域皆無法連線"))
         let profileOrder: [Int] = {
             lock.lock(); defer { lock.unlock() }
             let all = Array(JMCrypto.profiles.indices)
@@ -127,6 +127,13 @@ final class JMClient {
                         lastError = AppError.http(response.statusCode)
                         continue
                     }
+                    // 有些網域會回 200 但內容不是 API 的 JSON（維護頁、封鎖頁…）；這種直接換下一個網域
+                    if !scramble && !Self.looksLikeEnvelope(data) {
+                        let snippet = String(String(decoding: data, as: UTF8.self)
+                            .trimmingCharacters(in: .whitespacesAndNewlines).prefix(60))
+                        lastError = AppError.message(L("禁漫：%@ 回傳的不是有效資料：%@", domain, snippet))
+                        break
+                    }
                     lock.lock()
                     preferred = domain
                     preferredProfile = profileIndex
@@ -142,6 +149,13 @@ final class JMClient {
         throw lastError
     }
 
+    private static func looksLikeEnvelope(_ data: Data) -> Bool {
+        var text = String(decoding: data, as: UTF8.self)
+        if let brace = text.firstIndex(of: "{") { text = String(text[brace...]) } else { return false }
+        guard let object = try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any] else { return false }
+        return object["code"] != nil
+    }
+
     /// 呼叫並解密 JSON 回應，回傳解密後的 `data`。
     func json(_ path: String,
               query: [URLQueryItem] = [],
@@ -155,13 +169,19 @@ final class JMClient {
         if let brace = text.firstIndex(of: "{") { text = String(text[brace...]) }
         let envelope = try HTTP.json(Data(text.utf8))
         guard (envelope.int("code") ?? 0) == 200 else {
-            let message = envelope.string("errorMsg") ?? envelope.string("message") ?? "請求失敗"
-            throw AppError.message("禁漫：\(message)")
+            let message = envelope.string("errorMsg") ?? envelope.string("message") ?? L("請求失敗")
+            let lower = message.lowercased()
+            if envelope.int("code") == 401 || lower.contains("登入") || lower.contains("登录") || lower.contains("login") {
+                throw AppError.message(L("禁漫：%@\n這個內容需要登入，請到「設定 → 禁漫」登入帳號", "\(message)"))
+            }
+            throw AppError.message(L("禁漫：%@", "\(message)"))
         }
         guard let encoded = envelope["data"] as? String else { return [:] }
         let plain = try JMCrypto.decrypt(encoded, ts: response.ts, secret: JMCrypto.dataSecret)
-        guard let object = try JSONSerialization.jsonObject(with: plain) as? [String: Any] else {
-            throw AppError.message("無法解析禁漫資料")
+        guard let object = (try? JSONSerialization.jsonObject(with: plain)) as? [String: Any] else {
+            // 沒登入時，需要會員的內容常回空陣列或無法解析的資料
+            let hint = AppSettings.shared.jmAVS.isEmpty ? L("（可能需要登入，請到「設定 → 禁漫」登入帳號）") : ""
+            throw AppError.message(L("無法解析禁漫資料") + hint)
         }
         return object
     }
@@ -178,7 +198,7 @@ final class JMClient {
 
     func login(username: String, password: String) async throws {
         let result = try await json("/login", form: ["username": username, "password": password])
-        guard let session = result.string("s") else { throw AppError.message("登入失敗：沒有取得工作階段") }
+        guard let session = result.string("s") else { throw AppError.message(L("登入失敗：沒有取得工作階段")) }
         await MainActor.run {
             AppSettings.shared.jmAVS = session
             AppSettings.shared.jmUsername = username
@@ -196,16 +216,51 @@ struct JMComicSource: ComicSource {
     let kind = SourceKind.jmcomic
 
     let sortOptions: [SortOption] = [
-        SortOption(id: "mr", title: "最新", order: "mr", time: "a"),
-        SortOption(id: "mv_t", title: "觀看（今日）", order: "mv", time: "t"),
-        SortOption(id: "mv_w", title: "觀看（本週）", order: "mv", time: "w"),
-        SortOption(id: "mv_m", title: "觀看（本月）", order: "mv", time: "m"),
-        SortOption(id: "mv", title: "觀看（全部）", order: "mv", time: "a"),
-        SortOption(id: "tf", title: "愛心最多", order: "tf", time: "a"),
-        SortOption(id: "mp", title: "圖片最多", order: "mp", time: "a"),
+        SortOption(id: "mr", title: L("最新"), order: "mr", time: "a"),
+        SortOption(id: "mv_t", title: L("觀看（今日）"), order: "mv", time: "t"),
+        SortOption(id: "mv_w", title: L("觀看（本週）"), order: "mv", time: "w"),
+        SortOption(id: "mv_m", title: L("觀看（本月）"), order: "mv", time: "m"),
+        SortOption(id: "mv", title: L("觀看（全部）"), order: "mv", time: "a"),
+        SortOption(id: "tf", title: L("愛心最多"), order: "tf", time: "a"),
+        SortOption(id: "mp", title: L("圖片最多"), order: "mp", time: "a"),
     ]
 
     private let client = JMClient.shared
+
+    var capabilities: SourceCapabilities { SourceCapabilities(comments: true, remoteFavorites: true) }
+
+    func loadComments(_ context: CommentContext, page: Int, replyTo: String?) async throws -> CommentPage {
+        let result = try await client.json("/forum", query: [
+            URLQueryItem(name: "mode", value: "all"),
+            URLQueryItem(name: "page", value: String(page)),
+            URLQueryItem(name: "aid", value: context.summary.sid),
+        ])
+        func map(_ item: [String: Any]) -> ComicComment {
+            let replies = result.isEmpty ? [] : ((item["replys"] as? [[String: Any]]) ?? []).map(map)
+            let name = item.string("nickname").flatMap { $0.isEmpty ? nil : $0 } ?? item.string("username") ?? "?"
+            return ComicComment(id: item.string("CID") ?? UUID().uuidString, userName: name, avatar: nil,
+                                content: item.string("content") ?? "", time: item.string("addtime"),
+                                replyCount: replies.isEmpty ? nil : replies.count,
+                                score: item.int("likes"), replies: replies)
+        }
+        let list = result.dicts("list").map(map)
+        let total = result.int("total") ?? 0
+        return CommentPage(comments: list, maxPage: total > 0 ? max(1, Int((Double(total) / 10).rounded(.up))) : nil)
+    }
+
+    func remoteFavorites(for summary: ComicSummary) async throws -> RemoteFavoriteState {
+        let json = try await client.json("/album", query: [URLQueryItem(name: "id", value: summary.sid)])
+        let favorited = (json["is_favorite"] as? Bool) == true || json.string("is_favorite") == "true"
+        return RemoteFavoriteState(folders: [RemoteFolder(id: "0", name: L("禁漫收藏"))],
+                                   favorited: favorited ? ["0"] : [], canManageFolders: false)
+    }
+
+    func setRemoteFavorite(_ summary: ComicSummary, folderId: String, adding: Bool) async throws {
+        let state = try await remoteFavorites(for: summary)
+        // 禁漫的收藏 API 是「切換」；狀態已符合就不用再送
+        guard state.favorited.contains(folderId) != adding else { return }
+        _ = try await client.json("/favorite", form: ["aid": summary.sid])
+    }
 
     private func coverURL(_ id: String) -> URL? {
         URL(string: "https://\(client.imageDomain)/media/albums/\(id)_3x4.jpg")
@@ -227,7 +282,18 @@ struct JMComicSource: ComicSource {
 
     // MARK: ComicSource
 
-    func browse(query: String, page: Int, sort: SortOption) async throws -> ComicPageResult {
+    func filterGroups(query: String) -> [FilterGroup] {
+        guard query.trimmingCharacters(in: .whitespaces).isEmpty else { return [] }
+        return [FilterGroup(id: "c", title: L("分類"), kind: .select, options: [
+            FilterOption(value: "0", title: L("全部")), FilterOption(value: "doujin", title: L("同人")),
+            FilterOption(value: "single", title: L("單本")), FilterOption(value: "short", title: L("短篇")),
+            FilterOption(value: "another", title: L("其他")), FilterOption(value: "hanman", title: L("韓漫")),
+            FilterOption(value: "meiman", title: L("美漫")), FilterOption(value: "doujin_cosplay", title: "Cosplay"),
+            FilterOption(value: "3D", title: "3D"), FilterOption(value: "english_site", title: L("英文站")),
+        ], defaultValue: "0")]
+    }
+
+    func browse(query: String, page: Int, sort: SortOption, filters: [String: String]) async throws -> ComicPageResult {
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let result: [String: Any]
         if trimmed.isEmpty {
@@ -235,7 +301,7 @@ struct JMComicSource: ComicSource {
             result = try await client.json("/categories/filter", query: [
                 URLQueryItem(name: "page", value: String(page)),
                 URLQueryItem(name: "order", value: ""),
-                URLQueryItem(name: "c", value: "0"),
+                URLQueryItem(name: "c", value: filters["c"] ?? "0"),
                 URLQueryItem(name: "o", value: order),
             ])
         } else {
@@ -268,7 +334,7 @@ struct JMComicSource: ComicSource {
 
     func detail(of summary: ComicSummary) async throws -> ComicDetail {
         let json = try await client.json("/album", query: [URLQueryItem(name: "id", value: summary.sid)])
-        guard let name = json.string("name") else { throw AppError.message("找不到這本漫畫") }
+        guard let name = json.string("name") else { throw AppError.message(L("找不到這本漫畫")) }
 
         var base = summary
         base.title = name
@@ -284,11 +350,11 @@ struct JMComicSource: ComicSource {
             guard let id = item.string("id") else { return nil }
             let sort = item.int("sort") ?? 0
             let rawTitle = item.string("name") ?? ""
-            return (sort, Chapter(id: id, title: rawTitle.isEmpty ? "第\(sort)話" : rawTitle))
+            return (sort, Chapter(id: id, title: rawTitle.isEmpty ? L("第%@話", "\(sort)") : rawTitle))
         }
         .sorted { $0.0 < $1.0 }
         .map(\.1)
-        if chapters.isEmpty { chapters = [Chapter(id: summary.sid, title: "開始閱讀")] }
+        if chapters.isEmpty { chapters = [Chapter(id: summary.sid, title: L("開始閱讀"))] }
 
         var stats: [String] = []
         if let views = json.string("total_views") { stats.append("👁 \(views)") }
@@ -298,7 +364,7 @@ struct JMComicSource: ComicSource {
 
         let description = json.string("description").flatMap { $0.isEmpty ? nil : $0 }
         let related = json.dicts("related_list").compactMap(self.summary(from:))
-        return ComicDetail(
+        var detail = ComicDetail(
             summary: base,
             description: description,
             authors: authors,
@@ -308,12 +374,15 @@ struct JMComicSource: ComicSource {
             related: related,
             pageCount: json.int("total_photos")
         )
+        detail.url = "https://jmcomic.me/album/\(summary.sid)"
+        detail.isRemoteFavorite = (json["is_favorite"] as? Bool) ?? (json.string("is_favorite") == "true")
+        return detail
     }
 
     func pages(of detail: ComicDetail, chapter: Chapter) async throws -> [ReaderPage] {
         let json = try await client.json("/chapter", query: [URLQueryItem(name: "id", value: chapter.id)])
         let names = json.strings("images")
-        guard !names.isEmpty else { throw AppError.message("這個章節沒有圖片") }
+        guard !names.isEmpty else { throw AppError.message(L("這個章節沒有圖片")) }
         let scrambleId = await fetchScrambleId(chapter.id)
         let aid = Int(chapter.id) ?? 0
         let domain = client.imageDomain

@@ -1,6 +1,44 @@
 import SwiftUI
 import UIKit
 
+/// venera 縮圖語法：`網址@x=起-迄&y=起-迄`（單位為像素；省略的軸取整張）
+enum ThumbnailCrop {
+    struct Parsed {
+        var base: String
+        var x: ClosedRange<CGFloat>?
+        var y: ClosedRange<CGFloat>?
+        var suffix: String
+    }
+
+    static func parse(_ key: String) -> Parsed {
+        guard let at = key.range(of: "@", options: .backwards) else { return Parsed(base: key, suffix: "") }
+        let tail = key[at.upperBound...]
+        guard tail.hasPrefix("x=") || tail.hasPrefix("y=") else { return Parsed(base: key, suffix: "") }
+        var parsed = Parsed(base: String(key[..<at.lowerBound]), suffix: String(key[at.lowerBound...]))
+        for part in tail.split(separator: "&") {
+            let pair = part.split(separator: "=", maxSplits: 1).map(String.init)
+            guard pair.count == 2 else { continue }
+            let range = pair[1].split(separator: "-").compactMap { Double($0) }
+            guard range.count == 2, range[1] > range[0] else { continue }
+            let closed = CGFloat(range[0])...CGFloat(range[1])
+            if pair[0] == "x" { parsed.x = closed } else if pair[0] == "y" { parsed.y = closed }
+        }
+        return parsed
+    }
+
+    static func apply(_ parsed: Parsed, to image: UIImage) -> UIImage {
+        guard parsed.x != nil || parsed.y != nil, let cg = image.cgImage else { return image }
+        let scale = image.scale
+        let width = CGFloat(cg.width), height = CGFloat(cg.height)
+        let x0 = max(0, (parsed.x?.lowerBound ?? 0) * (parsed.x == nil ? 1 : 1))
+        let x1 = min(width, parsed.x?.upperBound ?? width)
+        let y0 = max(0, parsed.y?.lowerBound ?? 0)
+        let y1 = min(height, parsed.y?.upperBound ?? height)
+        guard x1 > x0, y1 > y0, let cropped = cg.cropping(to: CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0)) else { return image }
+        return UIImage(cgImage: cropped, scale: scale, orientation: image.imageOrientation)
+    }
+}
+
 actor ImageLoader {
     static let shared = ImageLoader()
 
@@ -12,11 +50,22 @@ actor ImageLoader {
     }()
     private var inflight: [String: Task<UIImage, Error>] = [:]
 
-    private func key(for spec: ImageSpec) -> String {
+    static func cacheKey(_ spec: ImageSpec) -> String {
+        if spec.source.isVenera {
+            let base = ThumbnailCrop.parse(spec.imageKey ?? spec.url.absoluteString).base
+            return "\(spec.source.rawValue)|\(spec.comicId ?? "")|\(spec.epId ?? "")|\(base)"
+        }
         var components = URLComponents(url: spec.url, resolvingAgainstBaseURL: false)
         components?.query = nil // 禁漫的 ?v=timestamp 每次不同，不應影響快取
         return "\(components?.string ?? spec.url.absoluteString)#\(spec.scramble)"
     }
+
+    /// 記憶體快取鍵：同一張底圖的不同裁切要分開
+    private func key(for spec: ImageSpec) -> String {
+        Self.cacheKey(spec) + (spec.source.isVenera ? ThumbnailCrop.parse(spec.imageKey ?? "").suffix : "")
+    }
+
+    func clearMemory() { cache.removeAllObjects() }
 
     func image(for spec: ImageSpec) async throws -> UIImage {
         let key = key(for: spec)
@@ -34,7 +83,11 @@ actor ImageLoader {
 
     private static func fetch(_ spec: ImageSpec) async throws -> UIImage {
         let data = try await rawData(spec)
-        guard var image = UIImage(data: data) else { throw AppError.message("無法解碼圖片") }
+        guard var image = UIImage(data: data) else { throw AppError.message(L("無法解碼圖片")) }
+        if spec.source.isVenera, let key = spec.imageKey {
+            let parsed = ThumbnailCrop.parse(key)
+            if !parsed.suffix.isEmpty { image = ThumbnailCrop.apply(parsed, to: image) }
+        }
         if spec.scramble > 1, let restored = Descrambler.descramble(image, num: spec.scramble) {
             image = restored
         }
@@ -44,8 +97,22 @@ actor ImageLoader {
     /// 下載（或讀取本機）原始圖片資料；網路錯誤最多重試 3 次。
     static func rawData(_ spec: ImageSpec) async throws -> Data {
         if spec.url.isFileURL { return try Data(contentsOf: spec.url) }
+        let diskKey = cacheKey(spec)
+        if let cached = ImageDiskCache.read(diskKey) { return cached }
+        let data = try await fetchRemote(spec)
+        ImageDiskCache.write(diskKey, data)
+        return data
+    }
 
-        var lastError: Error = AppError.message("下載圖片失敗")
+    private static func fetchRemote(_ spec: ImageSpec) async throws -> Data {
+        if spec.source.isVenera {
+            return try await VeneraRuntime.shared.loadImage(
+                sourceKey: spec.source.veneraKey,
+                imageKey: ThumbnailCrop.parse(spec.imageKey ?? spec.url.absoluteString).base,
+                comicId: spec.comicId, epId: spec.epId)
+        }
+
+        var lastError: Error = AppError.message(L("下載圖片失敗"))
         for attempt in 0..<3 {
             do {
                 var result = try await HTTP.data(for: makeRequest(spec, url: spec.url))
@@ -81,14 +148,13 @@ actor ImageLoader {
 
     private static func makeRequest(_ spec: ImageSpec, url: URL) -> URLRequest {
         var request = URLRequest(url: url)
-        switch spec.source {
-        case .nhentai:
-            request.setValue("NClient/3 (GodBook iOS)", forHTTPHeaderField: "User-Agent")
-        case .jmcomic:
+        if spec.source == .jmcomic {
             request.setValue(JMClient.userAgent, forHTTPHeaderField: "User-Agent")
             request.setValue("image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8", forHTTPHeaderField: "Accept")
             request.setValue("com.JMComic3.app", forHTTPHeaderField: "X-Requested-With")
             request.setValue("https://www.cdnhjk.net", forHTTPHeaderField: "Referer")
+        } else {
+            request.setValue("NClient/3 (GodBook iOS)", forHTTPHeaderField: "User-Agent")
         }
         return request
     }
@@ -127,7 +193,8 @@ struct RemoteImageView: View {
         ZStack {
             if let image {
                 if fill {
-                    Image(uiImage: image).resizable().scaledToFill()
+                    // 用透明底色決定尺寸、圖片只當內容裁切；否則橫幅等寬圖會把版面撐出螢幕
+                    Color.clear.overlay { Image(uiImage: image).resizable().scaledToFill() }.clipped()
                 } else {
                     Image(uiImage: image).resizable().scaledToFit()
                 }

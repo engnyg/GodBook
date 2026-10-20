@@ -20,11 +20,14 @@ enum DownloadStorage {
     private static let imageExtensions: Set<String> = ["jpg", "jpeg", "png", "webp", "gif"]
 
     static func comicDir(_ summary: ComicSummary) -> URL {
-        root.appendingPathComponent("\(summary.source.rawValue)_\(summary.sid)", isDirectory: true)
+        let source = summary.source.rawValue.replacingOccurrences(of: ":", with: "-")
+        let id = summary.sid.components(separatedBy: CharacterSet(charactersIn: "/\\:?*\"<>|")).joined(separator: "_")
+        return root.appendingPathComponent("\(source)_\(id)", isDirectory: true)
     }
 
     static func chapterDir(_ summary: ComicSummary, _ chapterId: String) -> URL {
-        comicDir(summary).appendingPathComponent("ch_\(chapterId)", isDirectory: true)
+        let safe = chapterId.components(separatedBy: CharacterSet(charactersIn: "/\\:?*\"<>|")).joined(separator: "_")
+        return comicDir(summary).appendingPathComponent("ch_\(safe)", isDirectory: true)
     }
 
     static func coverFile(_ summary: ComicSummary) -> URL {

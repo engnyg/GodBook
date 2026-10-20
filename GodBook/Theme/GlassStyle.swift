@@ -127,6 +127,22 @@ struct GlassButton: View {
     }
 }
 
+/// 設定頁常用的玻璃面板（標題 + 內容）
+struct GlassPanel<Content: View>: View {
+    var title: String?
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let title { Text(title).font(.headline) }
+            content
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .glassCard(cornerRadius: 26)
+    }
+}
+
 // MARK: - 標籤流式排版
 
 struct FlowLayout: Layout {

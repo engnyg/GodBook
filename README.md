@@ -46,3 +46,9 @@ GodBook/Views/              首頁、詳情、閱讀器、書庫、設定
 - nhentai 的 API 呼叫流程移植自 NClientV3（Apache License 2.0）。
 - 禁漫 API 的簽章/解密/圖片還原邏輯移植自 jmcomic（MIT）。
 - 本專案為第三方客戶端，內容版權屬原網站與作者所有；請遵守所在地法規並確認自己已成年。
+
+## 內建漫畫源
+
+`GodBook/BundledSources/` 收錄 [venera-configs](https://github.com/venera-app/venera-configs) 的漫畫源腳本（index.json 與各 `.js`，不含 `_template_.js`、`_venera_.js`），App 第一次開啟時會自動安裝；之後可在「設定 → 漫畫源」新增、更新或移除。
+
+> 注意：venera-configs 上游 repo 沒有附授權條款，腳本版權屬各原作者。公開散布前請自行評估，或改為在編譯時下載。

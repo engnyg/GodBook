@@ -90,30 +90,8 @@ final class ZipWriter {
 }
 
 enum CBZExporter {
-    /// 把一部漫畫所有已下載完成的章節打包成 .cbz，存到 Documents/Exports。
+    /// 相容舊呼叫：匯出 CBZ
     static func export(_ summary: ComicSummary) throws -> URL {
-        let detail = DownloadStorage.loadDetail(summary)
-        let chapters = detail?.chapters ?? []
-        let finished = chapters.filter { DownloadStorage.isDone(DownloadStorage.chapterDir(summary, $0.id)) }
-        guard !finished.isEmpty else { throw AppError.message("沒有已下載完成的章節") }
-
-        let url = DownloadStorage.exports.appendingPathComponent("\(sanitize(summary.title)).cbz")
-        let zip = try ZipWriter(url: url)
-        for (chapterIndex, chapter) in finished.enumerated() {
-            let prefix = finished.count > 1
-                ? String(format: "%03d_%@/", chapterIndex + 1, sanitize(chapter.title))
-                : ""
-            for file in DownloadStorage.imageFiles(in: DownloadStorage.chapterDir(summary, chapter.id)) {
-                try zip.add(name: prefix + file.lastPathComponent, data: try Data(contentsOf: file))
-            }
-        }
-        try zip.finish()
-        return url
-    }
-
-    private static func sanitize(_ name: String) -> String {
-        let cleaned = name.components(separatedBy: CharacterSet(charactersIn: "/\\:*?\"<>|\n\r")).joined(separator: "_")
-            .trimmingCharacters(in: .whitespaces)
-        return String((cleaned.isEmpty ? "comic" : cleaned).prefix(80))
+        try ComicExport.export(summary, as: .cbz)
     }
 }

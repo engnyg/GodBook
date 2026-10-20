@@ -12,23 +12,30 @@ struct SettingsView: View {
     @State private var downloadSize: Int64 = 0
     @State private var confirmClear = false
     @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var venera: VeneraStore
 
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
+                safeModeCard
                 themeCard
                 backgroundCard
                 glassCard
-                nhentaiCard
-                jmCard
+                veneraCard
+                if !settings.safeMode {
+                    nhentaiCard
+                    jmCard
+                }
                 readerCard
+                browseCard
+                advancedCard
                 downloadCard
                 aboutCard
             }
             .padding(16)
         }
         .themedScreen()
-        .navigationTitle("設定")
+        .navigationTitle(L("設定"))
         .navigationBarTitleDisplayMode(.inline)
         .onChange(of: photoItem) { _, item in
             guard let item else { return }
@@ -44,7 +51,7 @@ struct SettingsView: View {
     // MARK: 主題
 
     private var themeCard: some View {
-        SettingsCard(title: "主題色", systemImage: "paintpalette.fill") {
+        SettingsCard(title: L("主題色"), systemImage: "paintpalette.fill") {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 10) {
                     ForEach(ThemePreset.all) { preset in
@@ -72,90 +79,125 @@ struct SettingsView: View {
                 }
                 .padding(.vertical, 4)
             }
-            ColorPicker("強調色", selection: theme.colorBinding(\.accentHex), supportsOpacity: false)
-            Picker("外觀", selection: $theme.config.appearance) {
+            ColorPicker(L("強調色"), selection: theme.colorBinding(\.accentHex), supportsOpacity: false)
+            Picker(L("外觀"), selection: $theme.config.appearance) {
                 ForEach(AppearanceMode.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
+            Picker(L("語言"), selection: $settings.language) {
+                ForEach(Language.choices, id: \.code) { Text($0.code == "system" ? L("跟隨系統") : $0.title).tag($0.code) }
+            }
         }
     }
 
     private var backgroundCard: some View {
-        SettingsCard(title: "背景", systemImage: "photo.fill") {
-            Picker("背景", selection: $theme.config.backgroundMode) {
+        SettingsCard(title: L("背景"), systemImage: "photo.fill") {
+            Picker(L("背景"), selection: $theme.config.backgroundMode) {
                 ForEach(BackgroundMode.allCases) { Text($0.title).tag($0) }
             }
             .pickerStyle(.segmented)
 
             switch theme.config.backgroundMode {
             case .system:
-                Text("使用系統預設背景").font(.footnote).foregroundStyle(.secondary)
+                Text(L("使用系統預設背景")).font(.footnote).foregroundStyle(.secondary)
             case .solid:
-                ColorPicker("背景顏色", selection: theme.colorBinding(\.solidHex), supportsOpacity: false)
+                ColorPicker(L("背景顏色"), selection: theme.colorBinding(\.solidHex), supportsOpacity: false)
             case .gradient:
-                ColorPicker("漸層起點", selection: theme.colorBinding(\.gradientStartHex), supportsOpacity: false)
-                ColorPicker("漸層終點", selection: theme.colorBinding(\.gradientEndHex), supportsOpacity: false)
+                ColorPicker(L("漸層起點"), selection: theme.colorBinding(\.gradientStartHex), supportsOpacity: false)
+                ColorPicker(L("漸層終點"), selection: theme.colorBinding(\.gradientEndHex), supportsOpacity: false)
             case .image:
                 PhotosPicker(selection: $photoItem, matching: .images) {
-                    Label(theme.backgroundImage == nil ? "選擇背景圖片" : "更換背景圖片", systemImage: "photo.on.rectangle")
+                    Label(theme.backgroundImage == nil ? L("選擇背景圖片") : L("更換背景圖片"), systemImage: "photo.on.rectangle")
                 }
                 if theme.backgroundImage != nil {
-                    LabeledSlider(title: "模糊", value: $theme.config.imageBlur, range: 0...30)
-                    LabeledSlider(title: "壓暗", value: $theme.config.imageDim, range: 0...0.8)
-                    Button("移除圖片", role: .destructive) { theme.clearBackgroundImage() }
+                    LabeledSlider(title: L("模糊"), value: $theme.config.imageBlur, range: 0...30)
+                    LabeledSlider(title: L("壓暗"), value: $theme.config.imageDim, range: 0...0.8)
+                    Button(L("移除圖片"), role: .destructive) { theme.clearBackgroundImage() }
                 }
             }
         }
     }
 
     private var glassCard: some View {
-        SettingsCard(title: "液態玻璃", systemImage: "drop.fill") {
-            Toggle("啟用玻璃效果", isOn: $theme.config.useGlass)
+        SettingsCard(title: L("液態玻璃"), systemImage: "drop.fill") {
+            Toggle(L("啟用玻璃效果"), isOn: $theme.config.useGlass)
             if theme.config.useGlass {
-                LabeledSlider(title: "染色強度", value: $theme.config.glassTint, range: 0...0.6)
+                LabeledSlider(title: L("染色強度"), value: $theme.config.glassTint, range: 0...0.6)
             }
             if #available(iOS 26.0, *) {
-                Text("目前系統支援原生液態玻璃 (iOS 26)。").font(.footnote).foregroundStyle(.secondary)
+                Text(L("目前系統支援原生液態玻璃 (iOS 26)。")).font(.footnote).foregroundStyle(.secondary)
             } else {
-                Text("iOS 26 以下以模糊材質模擬；升級到 iOS 26 即為原生液態玻璃。")
+                Text(L("iOS 26 以下以模糊材質模擬；升級到 iOS 26 即為原生液態玻璃。"))
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Button("還原預設主題", role: .destructive) { theme.reset() }
+            Button(L("還原預設主題"), role: .destructive) { theme.reset() }
+        }
+    }
+
+    // MARK: 安全模式
+
+    private var safeModeCard: some View {
+        SettingsCard(title: L("安全模式"), systemImage: "shield.lefthalf.filled") {
+            Toggle(L("隱藏 18+ 內容"), isOn: Binding(
+                get: { settings.safeMode },
+                set: { value in Task { _ = await SafeMode.set(value) } }))
+            Toggle(L("同時隱藏整個書庫分頁"), isOn: $settings.safeHideLibrary)
+            Text(L("開啟後會隱藏 18+ 來源（nhentai、禁漫與標記為 18+ 的漫畫源），以及標題或標籤帶有成人字眼的作品，包含收藏、紀錄與下載列表。若已啟用 App 鎖，關閉安全模式需要驗證。"))
+                .font(.footnote).foregroundStyle(.secondary)
+            link(L("管理 18+ 來源標記"), systemImage: "checklist") { SafeModeSourcesView() }
         }
     }
 
     // MARK: 來源
 
+    private var veneraCard: some View {
+        SettingsCard(title: L("來源管理"), systemImage: "puzzlepiece.extension.fill") {
+            NavigationLink {
+                VeneraSourcesView()
+            } label: {
+                HStack {
+                    Text(L("啟用 / 停用來源、管理 venera 漫畫源（%@ 個）", "\(venera.sources.count)"))
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            Text(L("相容 venera 的 JavaScript 漫畫源；內建一批來源，也可自行新增。"))
+                .font(.footnote).foregroundStyle(.secondary)
+        }
+    }
+
     private var nhentaiCard: some View {
         SettingsCard(title: "nhentai", systemImage: "network") {
-            TextField("鏡像網域", text: $settings.nhMirror)
+            TextField(L("鏡像網域"), text: $settings.nhMirror)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
-            SecureField("API Key（選填）", text: $settings.nhApiKey)
+            SecureField(L("API Key（選填）"), text: $settings.nhApiKey)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
-            Text("預設 nhentai.net。若遇到 403，可填入 API Key 或更換鏡像。")
+            Text(L("預設 nhentai.net。若遇到 403，可填入 API Key 或更換鏡像。"))
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
 
     private var jmCard: some View {
-        SettingsCard(title: "禁漫", systemImage: "person.crop.circle") {
+        SettingsCard(title: L("禁漫"), systemImage: "person.crop.circle") {
             if settings.jmLoggedIn {
                 HStack {
                     Label(settings.jmUsername, systemImage: "checkmark.seal.fill")
                     Spacer()
-                    Button("登出", role: .destructive) { Task { await JMClient.shared.logout() } }
+                    Button(L("登出"), role: .destructive) { Task { await JMClient.shared.logout() } }
                 }
             } else {
-                TextField("帳號", text: $settings.jmUsername)
+                TextField(L("帳號"), text: $settings.jmUsername)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .textFieldStyle(.roundedBorder)
-                SecureField("密碼", text: $jmPassword).textFieldStyle(.roundedBorder)
-                GlassButton(title: jmBusy ? "登入中…" : "登入", systemImage: "arrow.right.circle.fill", prominent: true) {
+                SecureField(L("密碼"), text: $jmPassword).textFieldStyle(.roundedBorder)
+                GlassButton(title: jmBusy ? L("登入中…") : L("登入"), systemImage: "arrow.right.circle.fill", prominent: true) {
                     login()
                 }
                 .disabled(jmBusy || settings.jmUsername.isEmpty || jmPassword.isEmpty)
@@ -163,11 +205,11 @@ struct SettingsView: View {
             if let jmMessage {
                 Text(jmMessage).font(.footnote).foregroundStyle(.secondary)
             }
-            TextField("自訂 API 網域（選填，逗號分隔）", text: $settings.jmCustomDomain)
+            TextField(L("自訂 API 網域（選填，逗號分隔）"), text: $settings.jmCustomDomain)
                 .textInputAutocapitalization(.never)
                 .autocorrectionDisabled()
                 .textFieldStyle(.roundedBorder)
-            Text("預設會自動向官方網域伺服器取得最新 API 網域。登入後可使用雲端收藏。")
+            Text(L("預設會自動向官方網域伺服器取得最新 API 網域。登入後可使用雲端收藏。"))
                 .font(.footnote).foregroundStyle(.secondary)
         }
     }
@@ -180,7 +222,7 @@ struct SettingsView: View {
         Task {
             do {
                 try await JMClient.shared.login(username: user, password: pass)
-                jmMessage = "登入成功"
+                jmMessage = L("登入成功")
                 jmPassword = ""
             } catch {
                 jmMessage = error.localizedDescription
@@ -190,44 +232,70 @@ struct SettingsView: View {
     }
 
     private var readerCard: some View {
-        SettingsCard(title: "閱讀", systemImage: "book.fill") {
-            Picker("閱讀方式", selection: $settings.readerMode) {
-                ForEach(ReaderMode.allCases) { Text($0.title).tag($0) }
-            }
-            .pickerStyle(.menu)
+        SettingsCard(title: L("閱讀"), systemImage: "book.fill") {
+            link(L("閱讀設定（模式、手勢、縮放、音量鍵…）"), systemImage: "slider.horizontal.below.rectangle") { ReaderSettingsPage() }
         }
     }
 
-    private var downloadCard: some View {
-        SettingsCard(title: "下載", systemImage: "arrow.down.circle.fill") {
-            Stepper("同時下載圖片數：\(settings.downloadConcurrency)", value: $settings.downloadConcurrency, in: 1...8)
-            Toggle("翻譯 nhentai 標籤（繁體中文）", isOn: $settings.translateTags)
+    private var browseCard: some View {
+        SettingsCard(title: L("瀏覽"), systemImage: "square.grid.2x2.fill") {
+            link(L("列表、搜尋、屏蔽、啟動頁面"), systemImage: "slider.vertical.3") { BrowseSettingsView() }
+        }
+    }
+
+    private var advancedCard: some View {
+        SettingsCard(title: L("進階"), systemImage: "gearshape.2.fill") {
+            link(L("網路（代理、憑證）"), systemImage: "network") { NetworkSettingsView() }
+            link(L("快取、備份與 WebDAV"), systemImage: "externaldrive.fill") { CacheDataSettingsView() }
+            link(L("安全性（App 鎖）"), systemImage: "lock.shield.fill") { SecuritySettingsView() }
+        }
+    }
+
+    private func link<Destination: View>(_ title: String, systemImage: String,
+                                         @ViewBuilder destination: () -> Destination) -> some View {
+        NavigationLink {
+            destination()
+        } label: {
             HStack {
-                Text("已佔用空間")
+                Label(title, systemImage: systemImage)
+                Spacer()
+                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.secondary)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var downloadCard: some View {
+        SettingsCard(title: L("下載"), systemImage: "arrow.down.circle.fill") {
+            Stepper(L("同時下載圖片數：%@", "\(settings.downloadConcurrency)"), value: $settings.downloadConcurrency, in: 1...8)
+            Toggle(L("翻譯 nhentai 標籤（繁體中文）"), isOn: $settings.translateTags)
+            HStack {
+                Text(L("已佔用空間"))
                 Spacer()
                 Text(ByteCountFormatter.string(fromByteCount: downloadSize, countStyle: .file)).foregroundStyle(.secondary)
             }
-            Button("清除所有下載", role: .destructive) { confirmClear = true }
+            Button(L("清除所有下載"), role: .destructive) { confirmClear = true }
                 .disabled(downloads.items.isEmpty)
-            Text("下載與匯出的檔案位於「檔案」App → GodBook → Downloads / Exports。")
+            Text(L("下載與匯出的檔案位於「檔案」App → GodBook → Downloads / Exports。"))
                 .font(.footnote).foregroundStyle(.secondary)
         }
         .task(id: downloads.items.map(\.done).reduce(0, +)) {
             downloadSize = await Task.detached { DownloadStorage.totalSize() }.value
         }
-        .confirmationDialog("確定要刪除所有已下載內容？", isPresented: $confirmClear, titleVisibility: .visible) {
-            Button("刪除全部", role: .destructive) { downloads.removeAll() }
+        .confirmationDialog(L("確定要刪除所有已下載內容？"), isPresented: $confirmClear, titleVisibility: .visible) {
+            Button(L("刪除全部"), role: .destructive) { downloads.removeAll() }
         }
     }
 
     private var aboutCard: some View {
-        SettingsCard(title: "關於", systemImage: "info.circle.fill") {
-            Text("""
-            GodBook 整合 nhentai 與禁漫兩個來源。
-            nhentai 的 API 流程參考 NClientV3 (Apache-2.0)；禁漫的 API 協定與下載流程參考 jmcomic (MIT) 與 jmcomic-downloader (MIT)。
-            標籤翻譯來自 EhTagTranslation Database（經 venera 整理）。
-            本 App 僅為第三方客戶端，內容版權屬原網站與作者所有。
-            """)
+        SettingsCard(title: L("關於"), systemImage: "info.circle.fill") {
+            Text([
+                L("GodBook 整合 nhentai、禁漫與 venera 漫畫源。"),
+                L("nhentai 的 API 流程參考 NClientV3 (Apache-2.0)；禁漫的 API 協定與下載流程參考 jmcomic (MIT) 與 jmcomic-downloader (MIT)；漫畫源執行環境與功能設計參考 venera。"),
+                L("標籤翻譯來自 EhTagTranslation Database（經 venera 整理）。"),
+                L("本 App 僅為第三方客戶端，內容版權屬原網站與作者所有。"),
+            ].joined(separator: "\n"))
             .font(.footnote)
             .foregroundStyle(.secondary)
         }

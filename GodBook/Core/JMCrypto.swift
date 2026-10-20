@@ -34,7 +34,7 @@ enum JMCrypto {
     static func decrypt(_ base64: String, ts: String, secret: String) throws -> Data {
         let cleaned = base64.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let encrypted = Data(base64Encoded: cleaned) else {
-            throw AppError.message("回應資料不是有效的 Base64")
+            throw AppError.message(L("回應資料不是有效的 Base64"))
         }
         let key = Array(md5Hex(ts + secret).utf8)
         let capacity = encrypted.count + kCCBlockSizeAES128
@@ -52,7 +52,7 @@ enum JMCrypto {
                         &moved)
             }
         }
-        guard status == kCCSuccess, moved > 0 else { throw AppError.message("解密失敗 (\(status))") }
+        guard status == kCCSuccess, moved > 0 else { throw AppError.message(L("解密失敗 (%@)", "\(status)")) }
         let padding = Int(output[moved - 1])
         let end = (1...16).contains(padding) && padding <= moved ? moved - padding : moved
         return Data(output[0..<end])

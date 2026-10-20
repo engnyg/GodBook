@@ -6,10 +6,10 @@ enum BackgroundMode: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .system: "系統"
-        case .solid: "純色"
-        case .gradient: "漸層"
-        case .image: "圖片"
+        case .system: L("系統")
+        case .solid: L("純色")
+        case .gradient: L("漸層")
+        case .image: L("圖片")
         }
     }
 }
@@ -19,9 +19,9 @@ enum AppearanceMode: String, Codable, CaseIterable, Identifiable {
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .system: "跟隨系統"
-        case .light: "淺色"
-        case .dark: "深色"
+        case .system: L("跟隨系統")
+        case .light: L("淺色")
+        case .dark: L("深色")
         }
     }
 }
@@ -121,12 +121,12 @@ struct ThemePreset: Identifiable {
 
 extension ThemePreset {
     static let all: [ThemePreset] = [
-        .init(name: "櫻花", accent: "#FF5A7A", start: "#5B3DF5", end: "#FF5A7A"),
-        .init(name: "極光", accent: "#30D5A0", start: "#0F2027", end: "#2C9F8B"),
-        .init(name: "夕陽", accent: "#FF9F0A", start: "#FF512F", end: "#F09819"),
-        .init(name: "深海", accent: "#0A84FF", start: "#0F2A5C", end: "#1B9CE0"),
-        .init(name: "葡萄", accent: "#BF5AF2", start: "#2B1055", end: "#7597DE"),
-        .init(name: "石墨", accent: "#8E8E93", start: "#1C1C1E", end: "#3A3A3C"),
+        .init(name: L("櫻花"), accent: "#FF5A7A", start: "#5B3DF5", end: "#FF5A7A"),
+        .init(name: L("極光"), accent: "#30D5A0", start: "#0F2027", end: "#2C9F8B"),
+        .init(name: L("夕陽"), accent: "#FF9F0A", start: "#FF512F", end: "#F09819"),
+        .init(name: L("深海"), accent: "#0A84FF", start: "#0F2A5C", end: "#1B9CE0"),
+        .init(name: L("葡萄"), accent: "#BF5AF2", start: "#2B1055", end: "#7597DE"),
+        .init(name: L("石墨"), accent: "#8E8E93", start: "#1C1C1E", end: "#3A3A3C"),
     ]
 }
 

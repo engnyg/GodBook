@@ -1,26 +1,44 @@
 import SwiftUI
 
 struct RootView: View {
+    @State private var tab = AppSettings.shared.initialTab
+    @ObservedObject private var deepLink = DeepLink.shared
+    @ObservedObject private var settings = AppSettings.shared
+
+    private var showLibrary: Bool { !(settings.safeMode && settings.safeHideLibrary) }
+
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             NavigationStack {
                 HomeView()
                     .comicDestinations()
             }
-            .tabItem { Label("探索", systemImage: "square.grid.2x2.fill") }
+            .tabItem { Label(L("探索"), systemImage: "square.grid.2x2.fill") }
+            .tag(0)
 
-            NavigationStack {
-                LibraryView()
-                    .comicDestinations()
+            if showLibrary {
+                NavigationStack {
+                    LibraryView()
+                        .comicDestinations()
+                }
+                .tabItem { Label(L("書庫"), systemImage: "books.vertical.fill") }
+                .tag(1)
             }
-            .tabItem { Label("書庫", systemImage: "books.vertical.fill") }
 
             NavigationStack {
                 SettingsView()
             }
-            .tabItem { Label("設定", systemImage: "slider.horizontal.3") }
+            .tabItem { Label(L("設定"), systemImage: "slider.horizontal.3") }
+            .tag(2)
         }
-        .task { DownloadManager.shared.resumeQueued() }
+        .overlay { ToastOverlay() }
+        .onChange(of: showLibrary) { _, shown in if !shown && tab == 1 { tab = 0 } }
+        .onChange(of: deepLink.summary) { _, value in if value != nil { tab = 0 } }
+        .task {
+            DownloadManager.shared.resumeQueued()
+            await VeneraStore.shared.bootstrap()
+            await FollowStore.shared.checkIfDue(favorites: FavoritesStore.shared)
+        }
     }
 }
 

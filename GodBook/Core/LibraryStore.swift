@@ -10,30 +10,14 @@ struct HistoryEntry: Identifiable, Codable, Hashable {
     var id: String { summary.id }
 }
 
-/// 本機收藏與閱讀紀錄（JSON 存放於 Application Support）。
+/// 閱讀紀錄（JSON 存放於 Application Support）。
 final class LibraryStore: ObservableObject {
-    @Published private(set) var favorites: [ComicSummary]
     @Published private(set) var history: [HistoryEntry]
 
-    private static let favoritesFile = "favorites.json"
     private static let historyFile = "history.json"
 
     init() {
-        favorites = Storage.load([ComicSummary].self, from: Self.favoritesFile) ?? []
         history = Storage.load([HistoryEntry].self, from: Self.historyFile) ?? []
-    }
-
-    func isFavorite(_ summary: ComicSummary) -> Bool {
-        favorites.contains { $0.id == summary.id }
-    }
-
-    func toggleFavorite(_ summary: ComicSummary) {
-        if let index = favorites.firstIndex(where: { $0.id == summary.id }) {
-            favorites.remove(at: index)
-        } else {
-            favorites.insert(summary, at: 0)
-        }
-        Storage.save(favorites, to: Self.favoritesFile)
     }
 
     func progress(for summary: ComicSummary) -> HistoryEntry? {

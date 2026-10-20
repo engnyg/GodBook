@@ -13,6 +13,12 @@ struct DetailView: View {
     @EnvironmentObject private var theme: ThemeStore
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var downloads: DownloadManager
+    @EnvironmentObject private var prefsStore: ReaderPrefsStore
+    @EnvironmentObject private var favorites: FavoritesStore
+    @EnvironmentObject private var follow: FollowStore
+    @State private var showFavoriteSheet = false
+    @State private var reverseOrder = AppSettings.shared.reverseChapters
+    @EnvironmentObject private var imageFavorites: ImageFavoritesStore
     @State private var detail: ComicDetail?
     @State private var isOffline = false
     @State private var errorMessage: String?
@@ -26,6 +32,7 @@ struct DetailView: View {
                 header
                 if let detail {
                     actions(detail)
+                    DetailExtraBar(detail: detail)
                     if let text = detail.description, !text.isEmpty {
                         Text(text)
                             .font(.callout)
@@ -34,12 +41,15 @@ struct DetailView: View {
                             .glassCard()
                     }
                     if !detail.tags.isEmpty { tagSection(detail) }
+                    ThumbnailStrip(detail: detail) { index in
+                        reader = ReaderRoute(detail: detail, chapterIndex: detail.firstReadIndex, startPage: index)
+                    }
                     if detail.chapters.count > 1 { chapterSection(detail) }
                     if !detail.related.isEmpty { relatedSection(detail) }
                 } else if let errorMessage {
                     VStack(spacing: 10) {
                         Text(errorMessage).multilineTextAlignment(.center)
-                        GlassButton(title: "重試", systemImage: "arrow.clockwise") { Task { await load() } }
+                        GlassButton(title: L("重試"), systemImage: "arrow.clockwise") { Task { await load() } }
                     }
                     .padding()
                     .glassCard()
@@ -55,18 +65,21 @@ struct DetailView: View {
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
-                    library.toggleFavorite(shown)
+                    showFavoriteSheet = true
                 } label: {
-                    Image(systemName: library.isFavorite(shown) ? "heart.fill" : "heart")
+                    Image(systemName: favorites.isFavorite(shown) ? "heart.fill" : "heart")
                 }
             }
         }
         .task { await load() }
+        .sheet(isPresented: $showFavoriteSheet) { FavoriteToggleSheet(summary: shown) }
         .fullScreenCover(item: $reader) { route in
-            ReaderView(route: route)
+            ReaderView(route: route, onClose: { reader = nil })
                 .environmentObject(library)
                 .environmentObject(theme)
                 .environmentObject(settings)
+                .environmentObject(prefsStore)
+                .environmentObject(imageFavorites)
         }
     }
 
@@ -87,7 +100,7 @@ struct DetailView: View {
                         Text(detail.stats.joined(separator: "  ")).font(.caption).foregroundStyle(.secondary)
                     }
                     if let count = detail.pageCount {
-                        Text("\(count) 頁").font(.caption).foregroundStyle(.secondary)
+                        Text(L("%@ 頁", "\(count)")).font(.caption).foregroundStyle(.secondary)
                     }
                 }
             }
@@ -102,9 +115,9 @@ struct DetailView: View {
         let resumeIndex = progress.flatMap { entry in detail.chapters.firstIndex { $0.id == entry.chapterId } }
         return VStack(spacing: 12) {
             readButtons(detail, progress: progress, resumeIndex: resumeIndex)
-            downloadAllButton(detail)
+            if !shown.source.isLocal { downloadAllButton(detail) }
             if isOffline {
-                Label("離線模式：顯示已下載的內容", systemImage: "wifi.slash")
+                Label(L("離線模式：顯示已下載的內容"), systemImage: "wifi.slash")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -113,15 +126,15 @@ struct DetailView: View {
     private func readButtons(_ detail: ComicDetail, progress: HistoryEntry?, resumeIndex: Int?) -> some View {
         HStack(spacing: 12) {
             if let progress, let resumeIndex {
-                GlassButton(title: "繼續 \(progress.pageIndex + 1) 頁", systemImage: "play.fill", prominent: true) {
+                GlassButton(title: L("繼續 %@ 頁", "\(progress.pageIndex + 1)"), systemImage: "play.fill", prominent: true) {
                     reader = ReaderRoute(detail: detail, chapterIndex: resumeIndex, startPage: progress.pageIndex)
                 }
-                GlassButton(title: "從頭", systemImage: "backward.end.fill") {
-                    reader = ReaderRoute(detail: detail, chapterIndex: 0, startPage: 0)
+                GlassButton(title: L("從頭"), systemImage: "backward.end.fill") {
+                    reader = ReaderRoute(detail: detail, chapterIndex: detail.firstReadIndex, startPage: 0)
                 }
             } else {
-                GlassButton(title: "開始閱讀", systemImage: "book.fill", prominent: true) {
-                    reader = ReaderRoute(detail: detail, chapterIndex: 0, startPage: 0)
+                GlassButton(title: L("開始閱讀"), systemImage: "book.fill", prominent: true) {
+                    reader = ReaderRoute(detail: detail, chapterIndex: detail.firstReadIndex, startPage: 0)
                 }
             }
         }
@@ -133,22 +146,22 @@ struct DetailView: View {
         let active = states.compactMap { $0 }.filter { $0.state == .downloading || $0.state == .queued }
         return Group {
             if finished == detail.chapters.count {
-                GlassButton(title: "已下載（點此刪除）", systemImage: "checkmark.circle.fill") {
+                GlassButton(title: L("已下載（點此刪除）"), systemImage: "checkmark.circle.fill") {
                     downloads.removeComic(detail.summary)
                 }
             } else if !active.isEmpty {
                 let done = states.compactMap { $0 }.reduce(0) { $0 + $1.done }
                 let total = states.compactMap { $0 }.reduce(0) { $0 + $1.total }
-                GlassButton(title: total > 0 ? "下載中 \(done)/\(total)（點此暫停）" : "等待下載…", systemImage: "arrow.down.circle.dotted") {
+                GlassButton(title: total > 0 ? L("下載中 %@/%@（點此暫停）", "\(done)", "\(total)") : L("等待下載…"), systemImage: "arrow.down.circle.dotted") {
                     downloads.pauseAll(of: detail.summary)
                 }
             } else if states.contains(where: { $0?.state == .paused || $0?.state == .failed }) {
-                GlassButton(title: "繼續下載", systemImage: "arrow.down.circle") {
+                GlassButton(title: L("繼續下載"), systemImage: "arrow.down.circle") {
                     downloads.resumeAll(of: detail.summary)
                     downloads.enqueue(detail: detail, chapters: detail.chapters)
                 }
             } else {
-                GlassButton(title: detail.chapters.count > 1 ? "下載全部章節" : "下載", systemImage: "arrow.down.circle") {
+                GlassButton(title: detail.chapters.count > 1 ? L("下載全部章節") : L("下載"), systemImage: "arrow.down.circle") {
                     downloads.enqueue(detail: detail, chapters: detail.chapters)
                 }
             }
@@ -214,9 +227,16 @@ struct DetailView: View {
 
     private func chapterSection(_ detail: ComicDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("章節（\(detail.chapters.count)）").font(.headline)
+            HStack {
+                Text(L("章節（%@）", "\(detail.chapters.count)")).font(.headline)
+                Spacer()
+                Button { withAnimation { reverseOrder.toggle() } } label: {
+                    Label(reverseOrder ? L("倒序") : L("正序"), systemImage: "arrow.up.arrow.down").font(.caption)
+                }
+            }
             LazyVStack(spacing: 8) {
-                ForEach(Array(detail.chapters.enumerated()), id: \.element.id) { index, chapter in
+                let entries = Array(detail.chapters.enumerated())
+                ForEach(reverseOrder ? Array(entries.reversed()) : entries, id: \.element.id) { index, chapter in
                     HStack(spacing: 12) {
                         Button {
                             reader = ReaderRoute(detail: detail, chapterIndex: index, startPage: 0)
@@ -240,7 +260,7 @@ struct DetailView: View {
 
     private func relatedSection(_ detail: ComicDetail) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("相關作品").font(.headline)
+            Text(L("相關作品")).font(.headline)
             ScrollView(.horizontal, showsIndicators: false) {
                 LazyHStack(spacing: 12) {
                     ForEach(detail.related) { item in
@@ -260,6 +280,7 @@ struct DetailView: View {
             let loaded = try await SourceRegistry.source(summary.source).detail(of: summary)
             detail = loaded
             isOffline = false
+            follow.markRead(summary, chapterCount: loaded.chapters.count, latestTitle: loaded.chapters.last?.title ?? "")
             // 已下載過的作品，順手更新本機詳情快取
             if !downloads.items(for: summary).isEmpty { DownloadStorage.saveDetail(loaded) }
         } catch {

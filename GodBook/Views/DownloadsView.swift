@@ -17,17 +17,20 @@ struct ShareSheet: UIViewControllerRepresentable {
 
 struct DownloadsView: View {
     @EnvironmentObject private var downloads: DownloadManager
+    @ObservedObject private var safe = AppSettings.shared
     @State private var exporting: String?
     @State private var exported: ExportedFile?
     @State private var errorMessage: String?
 
+    private var visibleComics: [ComicSummary] { downloads.comics.filter { !SafeMode.hides($0) } }
+
     var body: some View {
         Group {
-            if downloads.comics.isEmpty {
+            if visibleComics.isEmpty {
                 VStack(spacing: 12) {
                     Image(systemName: "arrow.down.circle").font(.largeTitle)
-                    Text("還沒有下載內容")
-                    Text("在作品詳情頁按「下載」即可離線閱讀")
+                    Text(L("還沒有下載內容"))
+                    Text(L("在作品詳情頁按「下載」即可離線閱讀"))
                         .font(.footnote)
                 }
                 .foregroundStyle(.secondary)
@@ -35,14 +38,14 @@ struct DownloadsView: View {
                 .padding(.top, 80)
             } else {
                 LazyVStack(spacing: 10) {
-                    ForEach(downloads.comics) { comic in row(comic) }
+                    ForEach(visibleComics) { comic in row(comic) }
                 }
                 .padding(12)
             }
         }
         .sheet(item: $exported) { file in ShareSheet(urls: [file.url]) }
-        .alert("匯出失敗", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
-            Button("好") {}
+        .alert(L("匯出失敗"), isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button(L("好")) {}
         } message: {
             Text(errorMessage ?? "")
         }
@@ -65,7 +68,7 @@ struct DownloadsView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                 VStack(alignment: .leading, spacing: 6) {
                     Text(comic.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                    Text("\(comic.source.title) · \(finished)/\(items.count) 章完成")
+                    Text(L("%@ · %@/%@ 章完成", "\(comic.source.title)", "\(finished)", "\(items.count)"))
                         .font(.caption).foregroundStyle(.secondary)
                     if active || total > done {
                         ProgressView(value: total > 0 ? Double(done) / Double(total) : 0)
@@ -89,21 +92,25 @@ struct DownloadsView: View {
             .glassCard(cornerRadius: 20, interactive: true)
             .contextMenu {
                 if finished > 0 {
-                    Button { export(comic) } label: { Label("匯出 CBZ", systemImage: "square.and.arrow.up") }
+                    Menu {
+                        ForEach(ExportFormat.allCases) { format in
+                            Button(format.title) { export(comic, format) }
+                        }
+                    } label: { Label(L("匯出"), systemImage: "square.and.arrow.up") }
                 }
                 Button(role: .destructive) { downloads.removeComic(comic) } label: {
-                    Label("刪除下載", systemImage: "trash")
+                    Label(L("刪除下載"), systemImage: "trash")
                 }
             }
         }
         .buttonStyle(.plain)
     }
 
-    private func export(_ comic: ComicSummary) {
+    private func export(_ comic: ComicSummary, _ format: ExportFormat) {
         exporting = comic.id
         Task {
             do {
-                let url = try await Task.detached { try CBZExporter.export(comic) }.value
+                let url = try await Task.detached { try ComicExport.export(comic, as: format) }.value
                 exported = ExportedFile(url: url)
             } catch {
                 errorMessage = error.localizedDescription

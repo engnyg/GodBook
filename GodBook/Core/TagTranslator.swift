@@ -33,4 +33,31 @@ final class TagTranslator {
     func groupTitle(_ group: String) -> String {
         table["rows"]?[group] ?? group
     }
+
+    struct Suggestion: Identifiable, Hashable {
+        let namespace: String
+        let name: String
+        let translation: String
+        var id: String { namespace + "|" + name }
+    }
+
+    /// 以英文名稱或中文翻譯模糊搜尋標籤，供搜尋建議使用。
+    func search(_ text: String, limit: Int = 8) -> [Suggestion] {
+        let needle = text.lowercased().trimmingCharacters(in: .whitespaces)
+        guard needle.count >= 1 else { return [] }
+        var prefixMatches: [Suggestion] = []
+        var otherMatches: [Suggestion] = []
+        for namespace in ["female", "male", "mixed", "other", "artist", "parody", "character", "group"] {
+            guard let table = self.table[namespace] else { continue }
+            for (key, value) in table {
+                let inKey = key.contains(needle), inValue = value.lowercased().contains(needle)
+                guard inKey || inValue else { continue }
+                let suggestion = Suggestion(namespace: namespace, name: key, translation: value)
+                if key.hasPrefix(needle) || value.lowercased().hasPrefix(needle) { prefixMatches.append(suggestion) }
+                else { otherMatches.append(suggestion) }
+                if prefixMatches.count >= limit * 4 { break }
+            }
+        }
+        return Array((prefixMatches + otherMatches).prefix(limit))
+    }
 }

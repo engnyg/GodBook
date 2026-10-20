@@ -6,3 +6,4 @@ Payload/
 build.log
 .DS_Store
 xcuserdata/
+dist/
