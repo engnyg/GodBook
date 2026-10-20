@@ -248,6 +248,8 @@ struct RemoteImageView: View {
     @State private var loadedSpec: ImageSpec?
     @State private var failed = false
     @State private var attempt = 0
+    /// 非同步載入完成時從 0 淡入到 1（記憶體快取直接命中的不淡入）
+    @State private var fade: Double = 1
 
     init(spec: ImageSpec?, fill: Bool = false, placeholderAspect: CGFloat = 0.72, loadDelay: TimeInterval = 0) {
         self.spec = spec
@@ -266,8 +268,10 @@ struct RemoteImageView: View {
                 if fill {
                     // 用透明底色決定尺寸、圖片只當內容裁切；否則橫幅等寬圖會把版面撐出螢幕
                     Color.clear.overlay { Image(uiImage: image).resizable().scaledToFill() }.clipped()
+                        .opacity(fade)
                 } else {
                     Image(uiImage: image).resizable().scaledToFit()
+                        .opacity(fade)
                 }
             } else {
                 Color.gray.opacity(0.14)
@@ -306,8 +310,12 @@ struct RemoteImageView: View {
         failed = false // 換了圖片（例如列表重用）時，不要沿用上一張的失敗狀態
         do {
             let loaded = try await ImageLoader.shared.image(for: spec)
+            fade = 0
             image = loaded
             loadedSpec = spec
+            // 先讓透明的圖片畫出一幀，再做淡入（與 venera 相同的 200 毫秒）
+            try? await Task.sleep(nanoseconds: 16_000_000)
+            withAnimation(.easeOut(duration: 0.2)) { fade = 1 }
         } catch {
             if !Task.isCancelled { failed = true }
         }

@@ -150,8 +150,11 @@ final class ZoomScrollView: UIScrollView, UIScrollViewDelegate {
                 let image = try await ImageLoader.shared.image(for: spec)
                 guard !Task.isCancelled else { return }
                 await MainActor.run {
-                    self?.imageView.image = image
-                    self?.spinner.stopAnimating()
+                    guard let self else { return }
+                    self.imageView.alpha = 0
+                    self.imageView.image = image
+                    self.spinner.stopAnimating()
+                    UIView.animate(withDuration: 0.2, delay: 0, options: [.curveEaseOut]) { self.imageView.alpha = 1 }
                 }
             } catch {
                 guard !Task.isCancelled else { return }
