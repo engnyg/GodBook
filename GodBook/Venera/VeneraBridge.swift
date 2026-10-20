@@ -526,7 +526,9 @@ final class VeneraBridge {
         let task = session.dataTask(with: request) { data, response, error in
             if let error {
                 let code = (error as NSError).code
-                if code == -1103, attempt < 3 {
+                // -1103，或後續重試遇到 TLS / 憑證錯誤（例如限制 TLS 1.2 後對方不接受）：改用下一種連線方式
+                let tlsErrors = (-1206 ... -1200)
+                if attempt < 3, code == -1103 || (attempt >= 1 && tlsErrors.contains(code)) {
                     self.http(method, urlString, headersJSON, body, bytes, resolve, reject, attempt: attempt + 1)
                     return
                 }

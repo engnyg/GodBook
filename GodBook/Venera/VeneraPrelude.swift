@@ -395,9 +395,11 @@ class ComicSource {
   loadSetting(key) {
     var r = __native.loadSetting(this.key, String(key));
     if (r != null) return JSON.parse(r);
-    var s = this.settings && this.settings[key];
-    if (s && s.default !== undefined) return s.default;
-    throw 'Setting not found: ' + key;
+    // 預設值用載入當下的快照：有的腳本會在 init 裡改寫 this.settings.xxx（例如把設定物件換成字串）
+    var d = this.__defaults;
+    if (d && Object.prototype.hasOwnProperty.call(d, key) && d[key] !== undefined) return d[key];
+    // 沒有預設值的設定回傳 null（venera 的行為），腳本自己會判斷
+    return null;
   }
   get isLogged() { return __native.isLogged(this.key); }
   translate(key) {
@@ -466,6 +468,14 @@ function __loadSource(js) {
   if (!inst.key) throw 'key is required';
   if (!/^[a-zA-Z0-9_]+$/.test(inst.key)) throw 'key ' + inst.key + ' is invalid';
   __native.bindSource(inst.key);
+  var defaults = {};
+  if (inst.settings && typeof inst.settings === 'object') {
+    Object.keys(inst.settings).forEach(function (k) {
+      var v = inst.settings[k];
+      if (v && typeof v === 'object' && v.default !== undefined) defaults[k] = v.default;
+    });
+  }
+  Object.defineProperty(inst, '__defaults', { value: defaults, enumerable: false });
   ComicSource.sources[inst.key] = inst;
   if (typeof inst.init === 'function') {
     try { var r = inst.init(); if (r && r.catch) r.catch(function (e) { console.error('init: ' + __errText(e)); }); }
