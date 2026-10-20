@@ -23,6 +23,7 @@ struct ReaderView: View {
     @State private var autoTurnTick = 0
     @State private var showChapterComments = false
     @State private var startAtEnd = false
+    @State private var recordTask: Task<Void, Never>?
     @ObservedObject private var appSettings = AppSettings.shared
 
     private let autoTurnTimer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -64,8 +65,13 @@ struct ReaderView: View {
         .statusBarHidden(!showChrome)
         .preferredColorScheme(.dark)
         .task(id: chapterIndex) { await load() }
-        .onChange(of: current) { _, newValue in
-            library.record(detail.summary, chapter: chapter, pageIndex: newValue)
+        .onChange(of: current) { _, _ in
+            // 快速捲動時頁碼一直變：閱讀進度停下來才記錄，避免每一頁都觸發一次畫面更新與寫檔
+            recordTask?.cancel()
+            recordTask = Task {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                if !Task.isCancelled { library.record(detail.summary, chapter: chapter, pageIndex: current) }
+            }
             prefetch()
             autoTurnTick = 0
         }
@@ -77,6 +83,8 @@ struct ReaderView: View {
         }
         .onChange(of: prefs.keepScreenOn) { _, value in UIApplication.shared.isIdleTimerDisabled = value }
         .onDisappear {
+            recordTask?.cancel()
+            if !pages.isEmpty { library.record(detail.summary, chapter: chapter, pageIndex: current) }
             volume.stop()
             UIApplication.shared.isIdleTimerDisabled = false
             library.flush() // 雲端保存策略會讀取檔案中的閱讀位置

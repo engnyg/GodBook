@@ -39,16 +39,46 @@ enum ThumbnailCrop {
     }
 }
 
-actor ImageLoader {
-    static let shared = ImageLoader()
-
-    private let cache: NSCache<NSString, UIImage> = {
+/// 已解碼圖片的記憶體快取。NSCache 本身是執行緒安全的，視圖可以同步讀取：
+/// 快速捲動時視圖不斷重建，若每次都先顯示佔位再非同步載入，畫面會閃動、版面會跳。
+enum ImageMemory {
+    static let cache: NSCache<NSString, UIImage> = {
         let cache = NSCache<NSString, UIImage>()
         cache.countLimit = 120
         cache.totalCostLimit = 256 << 20
         return cache
     }()
-    private var inflight: [String: Task<UIImage, Error>] = [:]
+    private static let aspects = NSCache<NSString, NSNumber>()
+
+    static func key(_ spec: ImageSpec) -> String {
+        ImageLoader.cacheKey(spec) + (spec.source.isVenera ? ThumbnailCrop.parse(spec.imageKey ?? "").suffix : "")
+    }
+
+    static func image(for spec: ImageSpec) -> UIImage? { cache.object(forKey: key(spec) as NSString) }
+
+    /// 這張圖的寬高比（載入過才有），讓還沒載入的佔位與實際高度一致，不會在載入時把版面撐開
+    static func aspect(for spec: ImageSpec) -> CGFloat? {
+        aspects.object(forKey: key(spec) as NSString).map { CGFloat($0.doubleValue) }
+    }
+
+    static func store(_ image: UIImage, for spec: ImageSpec) {
+        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
+        cache.setObject(image, forKey: key(spec) as NSString, cost: cost)
+        if image.size.height > 0 {
+            aspects.setObject(NSNumber(value: Double(image.size.width / image.size.height)), forKey: key(spec) as NSString)
+        }
+    }
+}
+
+actor ImageLoader {
+    static let shared = ImageLoader()
+
+    private struct Flight {
+        let id = UUID()
+        let task: Task<UIImage, Error>
+        var waiters = 0
+    }
+    private var inflight: [String: Flight] = [:]
 
     static func cacheKey(_ spec: ImageSpec) -> String {
         if spec.source.isVenera {
@@ -60,24 +90,38 @@ actor ImageLoader {
         return "\(components?.string ?? spec.url.absoluteString)#\(spec.scramble)"
     }
 
-    /// 記憶體快取鍵：同一張底圖的不同裁切要分開
-    private func key(for spec: ImageSpec) -> String {
-        Self.cacheKey(spec) + (spec.source.isVenera ? ThumbnailCrop.parse(spec.imageKey ?? "").suffix : "")
+    func clearMemory() { ImageMemory.cache.removeAllObjects() }
+
+    /// 所有等這張圖的人都離開（例如快速捲動時視圖已被捲過去）時，連下載一起取消，
+    /// 不讓用不到的圖佔住連線，擋住真正在畫面上的圖。
+    private func leave(_ key: String, flight id: UUID) {
+        guard var flight = inflight[key], flight.id == id else { return }
+        flight.waiters -= 1
+        if flight.waiters <= 0 {
+            flight.task.cancel()
+            inflight[key] = nil
+        } else {
+            inflight[key] = flight
+        }
     }
 
-    func clearMemory() { cache.removeAllObjects() }
-
     func image(for spec: ImageSpec) async throws -> UIImage {
-        let key = key(for: spec)
-        if let cached = cache.object(forKey: key as NSString) { return cached }
-        if let task = inflight[key] { return try await task.value }
+        let key = ImageMemory.key(spec)
+        if let cached = ImageMemory.image(for: spec) { return cached }
 
-        let task = Task { try await Self.fetch(spec) }
-        inflight[key] = task
-        defer { inflight[key] = nil }
-        let image = try await task.value
-        let cost = Int(image.size.width * image.size.height * image.scale * image.scale * 4)
-        cache.setObject(image, forKey: key as NSString, cost: cost)
+        if inflight[key] == nil {
+            inflight[key] = Flight(task: Task { try await Self.fetch(spec) })
+        }
+        inflight[key]!.waiters += 1
+        let flight = inflight[key]!
+        defer { if inflight[key]?.id == flight.id { inflight[key] = nil } }
+
+        let image = try await withTaskCancellationHandler {
+            try await flight.task.value
+        } onCancel: {
+            Task { await self.leave(key, flight: flight.id) }
+        }
+        ImageMemory.store(image, for: spec)
         return image
     }
 
@@ -198,6 +242,16 @@ struct RemoteImageView: View {
     @State private var failed = false
     @State private var attempt = 0
 
+    init(spec: ImageSpec?, fill: Bool = false, placeholderAspect: CGFloat = 0.72) {
+        self.spec = spec
+        self.fill = fill
+        self.placeholderAspect = placeholderAspect
+        // 已在記憶體快取的圖直接顯示，不經過佔位（快速捲動時視圖會一直重建）
+        let cached = spec.flatMap { ImageMemory.image(for: $0) }
+        _image = State(initialValue: cached)
+        _loadedSpec = State(initialValue: cached == nil ? nil : spec)
+    }
+
     var body: some View {
         ZStack {
             if let image {
@@ -209,7 +263,7 @@ struct RemoteImageView: View {
                 }
             } else {
                 Color.gray.opacity(0.14)
-                    .aspectRatio(placeholderAspect, contentMode: .fit)
+                    .aspectRatio(spec.flatMap { ImageMemory.aspect(for: $0) } ?? placeholderAspect, contentMode: .fit)
                     .overlay {
                         if failed {
                             Button {
