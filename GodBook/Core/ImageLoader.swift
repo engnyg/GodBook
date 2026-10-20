@@ -91,6 +91,15 @@ actor ImageLoader {
         if spec.scramble > 1, let restored = Descrambler.descramble(image, num: spec.scramble) {
             image = restored
         }
+        // 超大的圖（例如條漫、高解析掃描）解碼成點陣圖要幾十 MB，滾動時會卡頓、也容易吃光記憶體；
+        // 縮到寬度 2048 像素以內再解碼（在背景執行緒），一般螢幕與縮放都夠用
+        let maxPixelWidth: CGFloat = 2048
+        let pixelWidth = image.size.width * image.scale
+        if pixelWidth > maxPixelWidth {
+            let ratio = maxPixelWidth / pixelWidth
+            let target = CGSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            if let thumbnail = await image.byPreparingThumbnail(ofSize: target) { return thumbnail }
+        }
         return await image.byPreparingForDisplay() ?? image
     }
 
