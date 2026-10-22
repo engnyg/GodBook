@@ -166,7 +166,6 @@ private struct CloudFavoritesView: View {
                 PagedComicList(model: model)
             }
         }
-        .onAppear { refresh += 1 }
         .task(id: "\(current?.rawValue ?? "")|\(refresh)") {
             guard let kind = current else { return }
             let loader: (Int) async throws -> ComicPageResult

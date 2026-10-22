@@ -48,6 +48,13 @@ struct HomeView: View {
             : 0
     }
 
+    @State private var startedKey: LoadKey?
+
+    private var loadKey: LoadKey {
+        LoadKey(source: settings.lastSource, query: query, sort: currentSort.id, catalog: catalogState,
+                filters: currentFilters, paging: settings.listPaging, blocked: settings.blockedWords, safe: settings.safeMode)
+    }
+
     private struct LoadKey: Hashable {
         var source: SourceKind
         var query: String
@@ -124,13 +131,15 @@ struct HomeView: View {
             path.append(value)
             deepLink.summary = nil
         }
-        .task(id: LoadKey(source: settings.lastSource, query: query, sort: currentSort.id, catalog: catalogState,
-                          filters: currentFilters, paging: settings.listPaging, blocked: settings.blockedWords, safe: settings.safeMode)) {
+        .task(id: loadKey) {
             // 目前來源被停用時不送出請求，改切到第一個啟用的來源
             guard settings.isEnabled(settings.lastSource) else {
                 if let first = settings.enabledSources.first { settings.lastSource = first }
                 return
             }
+            // 從詳情頁返回時 .task 會再執行一次；條件沒變就不要重新載入（否則清單會被清空、回到最上面）
+            guard loadKey != startedKey else { return }
+            startedKey = loadKey
             let source = self.source
             let sort = currentSort
             let query = self.query

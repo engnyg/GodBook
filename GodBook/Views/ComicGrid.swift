@@ -247,6 +247,10 @@ struct SearchResultsView: View {
         var paging: Bool
     }
 
+    @State private var startedKey: LoadKey?
+
+    private var loadKey: LoadKey { LoadKey(filters: filters, paging: settings.listPaging) }
+
     var body: some View {
         ScrollView {
             PagedComicList(model: model)
@@ -264,7 +268,10 @@ struct SearchResultsView: View {
             }
         }
         .sheet(isPresented: $showFilters) { FilterSheet(groups: groups, values: $filters) }
-        .task(id: LoadKey(filters: filters, paging: settings.listPaging)) {
+        .task(id: loadKey) {
+            // 從詳情頁返回時 .task 會再執行一次；條件沒變就不要重新載入（否則清單會被清空、回到最上面）
+            guard loadKey != startedKey else { return }
+            startedKey = loadKey
             let source = self.source
             let sort = source.sortOptions[0]
             let query = route.query

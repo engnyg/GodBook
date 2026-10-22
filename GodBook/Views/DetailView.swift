@@ -72,7 +72,7 @@ struct DetailView: View {
                 }
             }
         }
-        .task { await load() }
+        .task { if detail == nil { await load() } }
         .sheet(isPresented: $showFavoriteSheet) { FavoriteToggleSheet(summary: shown) }
         .fullScreenCover(item: $reader) { route in
             ReaderView(route: route, onClose: { reader = nil })
